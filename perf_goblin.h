@@ -153,6 +153,17 @@ namespace perf_goblin
 		}
 
 		/*
+			Add an fixed incentive (modifies the total value of any solution)
+		*/
+		decision_t& add_incentive(real_t value)
+		{
+			decisions.emplace_back(decision_t());
+			decision_t &decision = decisions.back();
+			decision.options.push_back(option_t{0,value});
+			return decision;
+		}
+
+		/*
 			Add a binary decision which has no burden 
 		*/
 		decision_t& add_binary_item(real_t burden, real_t value)
@@ -180,14 +191,14 @@ namespace perf_goblin
 			Evaluate all decisions, selecting exactly one option for each and overwriting
 				the 'option' field to that option's index.
 
-			max_burden -- sets a limit on the total burden of selected options.
+			capacity -- sets a limit on the total burden of selected options.
 				If all solutions exceed this limit, the lowest-burden solution is chosen.
 
 			precision -- governs the algorithm's optimality and efficiency.
 				The solution's net value will be at least (100 - 100/precision)% of optimal.
 				Runtime increases linearly with precision.
 		*/
-		statistics_t decide(real_t max_burden, size_t precision = 50)
+		statistics_t decide(real_t capacity, size_t precision = 50)
 		{
 			precision = std::max<size_t>(precision, 4);
 
@@ -197,13 +208,13 @@ namespace perf_goblin
 			_prepare(precision);
 
 			// Shortcut: if the lightest solution is overburdened, return it (failure)
-			if (_stats_lightest.net_burden > max_burden)
+			if (_stats_lightest.net_burden > capacity)
 			{
 				return _stats_lightest;
 			}
 
 			// Shortcut: if the highest-valued solution is not overburdened, return it
-			if (_stats_highest.net_burden <= max_burden)
+			if (_stats_highest.net_burden <= capacity)
 			{
 				// Load the choice as noted in _prepare, and return it.
 				for (decision_t &decision : decisions) decision.choice = decision._choice_high;
@@ -219,7 +230,7 @@ namespace perf_goblin
 			while (top_score > 0)
 			{
 				optimum_t &optimum = optimums(last, top_score);
-				if (optimum.net_burden < max_burden)
+				if (optimum.net_burden < capacity)
 				{
 					// Commit this solution
 					score_t score = top_score;
