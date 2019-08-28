@@ -3,7 +3,7 @@ A little goblin who gleefully adjusts quality settings to maximize our gaming ex
 
 (Okay, technically it's a "polynomial-time approximate multiple-choice knapsack optimization solver" which can be applied to many other purposes — but it's far too much work explaining all of those.)
 
-![a drawing of a goblin](http://goblin.png)
+![a drawing of a goblin](goblin.png)
 
 By [Evan Balster](https://imitone.com)
 
@@ -21,7 +21,7 @@ The goblin solves a "Multiple-Choice Knapsack Problem" of the following form:
 
 Intuitively, we have a box of limited size, and we're trying to fit as much as possible.  Here's an example solution, where the width of a box represents burden and the area of the box represents value.  Note the small amount of unused space:
 
-![a series of differently-shaped boxes, sorted by height and packed tightly into a tray.](http://example-solution.png)
+![a series of differently-shaped boxes, sorted by height and packed tightly into a tray.](example-solution.png)
 
 
 
