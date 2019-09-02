@@ -7,7 +7,8 @@
 #include <cstdlib>
 #include <chrono>
 
-#include "perf_goblin.h"
+#include "knapsack.h"
+#include "goblin.h"
 
 
 using namespace perf_goblin;

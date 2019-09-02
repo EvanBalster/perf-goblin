@@ -118,7 +118,8 @@
     <ClCompile Include="..\main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\perf_goblin.h" />
+    <ClInclude Include="..\goblin.h" />
+    <ClInclude Include="..\knapsack.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
