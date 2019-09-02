@@ -16,25 +16,25 @@ using std::cout;
 using std::endl;
 
 
-std::ostream& operator<<(std::ostream &out, const Problem::option_t &option)
+std::ostream& operator<<(std::ostream &out, const Knapsack::Option &option)
 {
 	return out << "(#" << option.burden << " $" << option.value << ')';
 }
 
-std::ostream& operator<<(std::ostream &out, const Problem::options_t &options)
+std::ostream& operator<<(std::ostream &out, const Knapsack::Decision &decision)
 {
 	out << '{';
-	for (size_t i = 0; i < options.size(); ++i)
+	for (size_t i = 0; i < decision.option_count; ++i)
 	{
-		out << (i ? ", " : "") << options[i];
+		out << (i ? ", " : "") << decision.options[i];
 	}
 	out << '}';
 	return out;
 }
 
-std::ostream& operator<<(std::ostream &out, const Problem::statistics_t &stats)
+std::ostream& operator<<(std::ostream &out, const Knapsack::Stats &stats)
 {
-	return out << "(#" << stats.net_burden << " $" << stats.net_value << " @" << stats.net_points << ")";
+	return out << "(#" << stats.net_burden << " $" << stats.net_value << " @" << stats.net_score << ")";
 }
 
 static float random_burden()
@@ -50,7 +50,7 @@ static float random_value(float burden)
 	return std::sqrt(burden * uncorrelated_val);
 }
 
-void write_svg(std::ostream &out, Problem &problem, Problem::statistics_t solution_stats, float max_burden)
+void write_svg(std::ostream &out, Knapsack &problem, float max_burden)
 {
 	out << std::fixed << std::setprecision(3);
 
@@ -78,8 +78,8 @@ void write_svg(std::ostream &out, Problem &problem, Problem::statistics_t soluti
 
 	for (unsigned i = 0; i < problem.decisions.size(); ++i)
 	{
-		auto &d = problem.decisions[i];
-		auto &c = d.options[d.choice];
+		auto *d = problem.decisions[i];
+		auto &c = d->chosen();
 		if (c.burden <= 0.f) continue;
 
 		box_t box = {c.burden, c.value / c.burden, i};
@@ -89,8 +89,8 @@ void write_svg(std::ostream &out, Problem &problem, Problem::statistics_t soluti
 
 	for (auto &box : boxes)
 	{
-		auto &d = problem.decisions[box.index];
-		auto &c = d.options[d.choice];
+		auto *d = problem.decisions[box.index];
+		auto &c = d->chosen();
 
 		float y = 150.f;
 		float wid = x_scale * box.burden, hei = y_scale * box.value_burden_ratio;
@@ -100,7 +100,7 @@ void write_svg(std::ostream &out, Problem &problem, Problem::statistics_t soluti
 		out << "\t\t<rect x=\"" << x << "\" y=\"" << (y-hei)
 			<< "\" width=\"" << wid << "\" height=\"" << hei;
 		if (c.value == 0.f) out << "\" fill=\"#CC6666";
-		else if (d.options.size() == 2) out << "\" fill=\"#55BBBB";
+		else if (d->option_count == 2) out << "\" fill=\"#55BBBB";
 		out << "\"/>";
 		out << "<!-- " << c << " -->" "\n";
 		x += wid;
@@ -111,24 +111,24 @@ void write_svg(std::ostream &out, Problem &problem, Problem::statistics_t soluti
 	out << "</svg>";
 }
 
-void describe_problem(std::ostream &out, Problem &problem)
+void describe_problem(std::ostream &out, Knapsack &problem)
 {
 	out << "problem & solution:" << endl;
 	for (unsigned i = 0; i < problem.decisions.size(); ++i)
 	{
 		auto &decision = problem.decisions[i];
 		out << " " << std::setw(3) << (i+1) << ": ";
-		auto opts = decision.options.size();
+		auto opts = decision->option_count;
 		switch (opts)
 		{
 		case 0: case 1: out << "   ";                       break;
-		case 2:  out << (decision.choice ? " on" : "off");  break;
-		default: out << (decision.choice+1) << "/" << opts; break;
+		case 2:  out << (decision->choice ? " on" : "off");  break;
+		default: out << (decision->choice+1) << "/" << opts; break;
 		}
 		
-		//<< " " << decision.options[decision.choice]
-		//<< " @" << std::setw(2) << decision.options[decision.choice]._points << endl
-		out << " ~ " << decision.options << endl;
+		//<< " " << decision.chosen()
+		//<< " @" << std::setw(2) << decision.chosen().score << endl
+		out << " ~ " << *decision << endl;
 	}
 	out << endl;
 
@@ -140,9 +140,99 @@ void describe_problem(std::ostream &out, Problem &problem)
 	}*/
 }
 
+void generate_problem(Knapsack &problem, size_t count = 50)
+{
+	static std::vector<Knapsack::Decision> decisions;
+	static std::vector<Knapsack::Option>   options;
+
+	decisions.clear();
+	options.clear();
+
+	for (unsigned i = 0; i < count; ++i)
+	{
+		switch (rand() & 7)
+		{
+		case 0:
+			// Fixed burden
+			decisions.emplace_back(Knapsack::Decision());
+			decisions.back().option_count = 1;
+			options.push_back(Knapsack::Option{random_burden()});
+			break;
+
+		case 1:
+			// Fixed incentive
+			decisions.emplace_back(Knapsack::Decision());
+			decisions.back().option_count = 1;
+			options.push_back(Knapsack::Option{0, random_value(random_burden()) - random_value(random_burden())});
+			break;
+			
+		case 2: case 3: case 4:
+			// Binary choice
+			{
+				float burden = random_burden(), value = random_value(burden);
+
+				decisions.emplace_back(Knapsack::Decision());
+				decisions.back().option_count = 2;
+				options.push_back(Knapsack::Option{0,0});
+				options.push_back(Knapsack::Option{burden, value});
+			}
+			break;
+
+		case 5: case 6:
+			// Multiple choice, orderly
+			{
+				decisions.emplace_back(Knapsack::Decision());
+				auto &decision = decisions.back();
+				float burden = 0.f, value = 0.f;
+				unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+				for (unsigned i = 0; i < count; ++i)
+				{
+					float new_burden = random_burden() * (2.f/count);
+					burden += new_burden;
+					value += random_value(new_burden);
+					Knapsack::Option option = {burden, value};
+					options.push_back(option);
+					++decision.option_count;
+				}
+			}
+			break;
+
+		case 7: default:
+			// Multiple choice, chaotic
+			{
+				decisions.emplace_back(Knapsack::Decision());
+				auto &decision = decisions.back();
+				unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+				for (unsigned i = 0; i < count; ++i)
+				{
+					float burden = random_burden() * (2.f/count);
+					float value = random_value(burden);
+					Knapsack::Option option = {burden, value};
+					options.push_back(option);
+					++decision.option_count;
+				}
+			}
+			break;
+		}
+	}
+
+	Knapsack::Option *option = options.data();
+	for (auto &d : decisions)
+	{
+		d.options = option;
+		option += d.option_count;
+	}
+
+	problem.decisions.clear();
+	for (auto &d : decisions)
+	{
+		problem.add_decision(&d);
+	}
+}
+
 int main(int argc, char **argv)
 {
-	Problem problem;
+	Knapsack problem;
 
 	srand(unsigned(time(NULL)));
 
@@ -150,72 +240,13 @@ int main(int argc, char **argv)
 
 	while (true)
 	{
-		problem.decisions.clear();
-
 		cout << "Generating a new multiple-choice knapsack problem." << endl;
+		generate_problem(problem);
 		cout << endl;
 
 		cout << "  problem:" << endl;
 
-		for (unsigned i = 0; i < 50; ++i)
-		{
-			switch (rand() & 7)
-			{
-			case 0:
-				// Fixed burden
-				problem.add_burden(random_burden());
-				break;
-
-			case 1:
-				// Fixed incentive
-				problem.add_incentive(random_value(random_burden()) - random_value(random_burden()));
-				break;
-			
-			case 2: case 3: case 4:
-				// Binary choice
-				{
-					float burden = random_burden();
-					problem.add_binary_item(burden, random_value(burden));
-				}
-				break;
-
-			case 5: case 6:
-				// Multiple choice, orderly
-				{
-					problem.decisions.emplace_back(Problem::decision_t());
-					auto &decision = problem.decisions.back();
-					float burden = 0.f, value = 0.f;
-					unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
-					for (unsigned i = 0; i < count; ++i)
-					{
-						float new_burden = random_burden() * (2.f/count);
-						burden += new_burden;
-						value += random_value(new_burden);
-						Problem::option_t option = {burden, value};
-						decision.options.push_back(option);
-					}
-				}
-				break;
-
-			case 7: default:
-				// Multiple choice, chaotic
-				{
-					problem.decisions.emplace_back(Problem::decision_t());
-					auto &decision = problem.decisions.back();
-					unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
-					for (unsigned i = 0; i < count; ++i)
-					{
-						float burden = random_burden() * (2.f/count);
-						float value = random_value(burden);
-						Problem::option_t option = {burden, value};
-						decision.options.push_back(option);
-					}
-				}
-				break;
-			}
-		}
-
-		unsigned precision = 50;
+		unsigned precision = 30;
 		float max_burden = 0.f;
 		{
 			size_t N = problem.decisions.size();
@@ -225,7 +256,7 @@ int main(int argc, char **argv)
 
 		{
 			size_t total_options = 0;
-			for (auto &d : problem.decisions) total_options += d.options.size();
+			for (auto *d : problem.decisions) total_options += d->option_count;
 
 			cout << "    decisions:     " << problem.decisions.size() << endl;
 			cout << "    total options: " << total_options << endl;
@@ -240,42 +271,43 @@ int main(int argc, char **argv)
 		// Run solver
 		cout << "    (...solving...)" << endl;
 		auto prof_time = std::chrono::high_resolution_clock::now();
-		auto stats_solution = problem.decide(max_burden, precision);
+		bool successful = problem.decide(max_burden, precision);
 		float time_taken = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - prof_time).count();
 		cout << endl;
 
 		{
-			size_t table_size = problem.optimums.store.size(), table_empties = 0;
+			size_t table_size = problem.minimums.store.size(),
+				table_size_max = problem.decisions.size() * problem.stats.highest.net_score;
 
-			for (auto &item : problem.optimums.store)
+			/*for (auto &item : problem.minimums.store)
 			{
-				if (!(item.net_burden < std::numeric_limits<float>::infinity())) ++table_empties;
-			}
+				if (!(item.net_burden < Knapsack::economy_t::impossible())) ++table_empties;
+			}*/
 
 			cout << "  solver data:" << endl;
 			cout << "    solver time: " << (1000000.f*time_taken) << " us" << endl;
 			cout << "    solution is: ";
-			if      (problem._iterations)       cout << "approximate optimum (" << problem._iterations << " iterations)";
-			else if (stats_solution.net_points) cout << "ideal";
-			else                                cout << "impossible (selecting minimum burden)";
+			if      (problem.stats.iterations) cout << "approximate (" << problem.stats.iterations << " iterations)";
+			else if (successful)               cout << "ideal";
+			else                               cout << "impossible (selecting minimum burden)";
 			cout << endl;
 			if (table_size)
 			{
 				cout << "    table size:  " << table_size << endl;
-				cout << "    table fill:  " << (100.f - 100.f*table_empties / table_size) << "%" << endl;
+				cout << "    table fill:  " << (100.f*table_size / table_size_max) << "%" << endl;
 			}
 			cout << endl;
 		}
 
 		{
 			cout << "  solution stats:" << endl;
-			cout << "    min-burden: " << problem._stats_lightest << endl;
-			cout << "    max-score:  " << problem._stats_highest << endl;
-			cout << "    chosen:     " << stats_solution << endl;
+			cout << "    min-burden: " << problem.stats.lightest << endl;
+			cout << "    max-score:  " << problem.stats.highest << endl;
+			cout << "    chosen:     " << problem.stats.chosen << endl;
 			cout << "    efficiency: "
-				<< "(#" << (100.f*stats_solution.net_burden / problem._stats_highest.net_burden) << "%"
-				<< " $" << (100.f*stats_solution.net_value  / problem._stats_highest.net_value ) << "%"
-				<< " @" << (100.f*stats_solution.net_points / problem._stats_highest.net_points) << "%) compared to max-score" << endl;
+				<< "(#" << (100.f*problem.stats.chosen.net_burden / problem.stats.highest.net_burden) << "%"
+				<< " $" << (100.f*problem.stats.chosen.net_value  / problem.stats.highest.net_value ) << "%"
+				<< " @" << (100.f*problem.stats.chosen.net_score / problem.stats.highest.net_score) << "%) compared to max-score" << endl;
 			cout << endl;
 		}
 
@@ -284,13 +316,13 @@ int main(int argc, char **argv)
 		while (true)
 		{
 			cout << "What now?\n"
-				"  R = go again\n"
+				"  R = go again (default action)\n"
 				"  V = view problem and solution\n"
 				"  S = save SVG diagram\n"
 				"  Q = quit\n"
 				">> ";
 			std::string s;
-			std::cin >> s;
+			std::getline(std::cin, s);
 
 			if (s.length() == 0 || s[0] == 'r' || s[0] == 'R' || s[0] == '\r' || s[0] == '\n')
 			{
@@ -307,7 +339,7 @@ int main(int argc, char **argv)
 			else if (s[0] == 's' || s[0] == 'S')
 			{
 				std::ofstream out("solution.svg");
-				write_svg(out, problem, stats_solution, max_burden);
+				write_svg(out, problem, max_burden);
 				if (out.good()) cout << "saved to solution.svg" << endl;
 				else            cout << "couldn't save to solution.svg" << endl;
 			}
