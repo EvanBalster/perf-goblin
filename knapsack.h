@@ -56,6 +56,11 @@ namespace perf_goblin
 			T_Burden _mk = 0;
 			T_Burden _vk = 0;
 
+			void reset()    {_k = 0; _mk = 0; _vk = 0;}
+
+			explicit operator bool() const    {return _k > 0;}
+
+			T_Burden count    () const    {return _k;}
 			T_Burden mean     () const    {return _mk;}
 			T_Burden variance () const    {return _vk / (_k - 1);}
 			T_Burden deviation() const    {return std::sqrt(variance());}

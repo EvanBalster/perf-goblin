@@ -1,17 +1,16 @@
 #pragma once
 
 /*
-	C++ implementation of the multiple-choice knapsack algorithm.
-		Attempts to find the combination of options which optimizes value,
-		while keeping net burden below a hard limit.
+	A little goblin which gleefully adjusts settings to maintain FPS.
+		It is based on the knapsack algorithm in knapsack.h.
+	
+	The goblin controls a list of settings, each of which has some options.
+		Each option is assigned a subjective numerical "experience value".
+		Settings may provide measurements of their performance cost.
 
-	In typical use-cases, burden is proportional to CPU or GPU time.
-		Maximum burden is chosen to maintain a desirable framerate or
-		meet a deadline of some other kind (eg, for audio rendering).
-
-	The algorithm is most useful when burden values come from live profiling.
-		It's also possible to use estimated proportional burden values,
-		dynamically adjusting the maximum burden based on overall performance.
+	The goblin selects one option for each setting each frame.
+		It tries to maximize experience value without exceeding a cost limit.
+		It tracks recent and overall costs to estimate cost accurately.
 */
 
 #include <unordered_map> // Goblin's estimate map
@@ -23,9 +22,6 @@
 
 namespace perf_goblin
 {
-	
-
-	
 	template<typename T_Economy> class Setting_;
 	using Setting = Setting_<Economy_f>;
 
@@ -70,12 +66,16 @@ namespace perf_goblin
 			burden_stat_t past_run;
 			burden_stat_t this_run;
 			burden_stat_t recent;
+
+			// We store blind guess in past run (because these are mutually exclusive)
+			burden_t &blind_guess() const    {return past_run._mk;}
 		};
 
 		struct Estimates
 		{
 			size_t         data_count = 0;
 			choice_index_t count;
+			bool           fully_explored = false;
 			Estimate       estimates[];
 
 			Estimates(choice_index_t option_count)    : count(option_count) {}
@@ -247,19 +247,22 @@ namespace perf_goblin
 		for (auto *setting : settings)
 		{
 			auto measure = setting->measurement();
+			auto &decision = setting->decision();
+
+			auto &estimates = estimates_for(setting->id(), decision.option_count);
 
 			if (measure.valid())
 			{
-				assert(measure.choice < setting->decision.option_count);
+				assert(measure.choice < decision.option_count);
 
-				auto &estimates = estimate_for(setting->id(), setting->decision.option_count);
 				auto &estimate  = estimates.estimates[measure.choice];
+				if (!estimate.this_run) ++estimates.count;
 
 				++estimates.data_count;
 				estimate.this_run.push      (measure.burden);
 				estimate.recent  .push_decay(measure.burden, config.recent_alpha);
 
-				if (estimate.past_run._k)
+				if (estimate.past_run)
 				{
 					proportion.past    += estimate.past_run.mean();
 					proportion.present += measure.burden;
@@ -271,44 +274,14 @@ namespace perf_goblin
 		auto ratio = proportion.ratio();
 
 		// Calculate estimated burden for all options
-		for (auto &pair : settings)
+		for (auto *setting : settings)
 		{
-			auto *setting = pair.first;
-			auto &estimates = pair.second;
-
 			auto &decision = setting->decision();
 
+			auto &estimates = estimates_for(setting->id(), decision.option_count);
+
 			// Estimate burdens for each choice.
-			if (estimates.data_count)
-			{
-				// Calculate estimated burden for each choice...
-				for (choice_index_t i = 0; i < decision.option_count; ++i)
-				{
-					auto &opt = decision.options[i];
-					auto &est = estimates.estimates[i];
-
-					if (est.this_run._k > 0)
-					{
-						// Estimate based on measurements
-						opt.burden = est.recent.mean_plus_sigmas(config.pessimism_sd);
-
-						// If below quota, mix with proportional past estimate
-						if (est.this_run._k < config.measure_quota)
-						{
-							float mix = est.this_run._k / config.measure_quota;
-							opt.burden =
-								(    mix) * opt.burden +
-								(1.f-mix) * ratio * est.past_run.mean_plus_sigmas(config.pessimism_sd);
-						}
-					}
-					else
-					{
-						// No data; use proportional past estimate.
-						opt.burden = ratio * est.past_run.mean_plus_sigmas(config.pessimism_sd);
-					}
-				}
-			}
-			else
+			if (estimates.data_count == 0)
 			{
 				// Lacking any profiler data from this run, we force to the default choice.
 				if (decision.choice >= decision.option_count) decision.choice = 0;
@@ -316,6 +289,67 @@ namespace perf_goblin
 				{
 					decision.options[i].burden =
 						((i == decision.choice) ? economy_t::trivial() : economy_t::impossible());
+				}
+			}
+			else
+			{
+				// Estimate burdens for each option, if possible.
+				estimates.fully_explored = true;
+				choice_index_t untried_options = 0;
+				burden_t lightest = economy_t::impossible();
+				for (choice_index_t i = 0; i < decision.option_count; ++i)
+				{
+					auto &opt = decision.options[i];
+					auto &est = estimates.estimates[i];
+
+					if (est.this_run)
+					{
+						if (est.this_run.count() < config.measure_quota)
+						{
+							// Blend recent data from this run.
+							float mix = est.this_run.count() / config.measure_quota;
+							opt.burden =
+								(    mix) * est.this_run.mean_plus_sigmas(config.pessimism_sd) +
+								(1.f-mix) * ratio * est.past_run.mean_plus_sigmas(config.pessimism_sd);
+						}
+						else
+						{
+							// Estimate based on recent measurements
+							opt.burden = est.recent.mean_plus_sigmas(config.pessimism_sd);
+						}
+
+						if (economy_t::lesser(opt.burden, lightest)) lightest = opt.burden;
+					}
+					else if (est.past_run)
+					{
+						// Estimate by comparing measurements from a past session.
+						opt.burden = ratio * est.past_run.mean_plus_sigmas(config.pessimism_sd);
+
+						if (economy_t::lesser(opt.burden, lightest)) lightest = opt.burden;
+					}
+					else
+					{
+						// This option is unexplored and inestimable.  We'll guess it below.
+						estimates.fully_explored = false;
+						++untried_options;
+					}
+				}
+
+				// Blindly guess at inestimable burdens
+				if (!estimates.fully_explored)
+				{
+					// Calculate a uniform blind guess for all burdens.
+					burden_t guess = lightest *
+						((config.measure_quota * untried_options) / estimates.data_count);
+
+					for (choice_index_t i = 0; i < decision.option_count; ++i)
+					{
+						auto &estimate  = estimates.estimates[i];
+						if (estimate.past_run) continue;
+						estimate.blind_guess() = guess;
+						if (estimate.this_run) continue;
+						decision.options[i].burden = guess;
+					}
 				}
 			}
 

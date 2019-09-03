@@ -141,7 +141,70 @@ void describe_problem(std::ostream &out, Knapsack &problem)
 	}*/
 }
 
-void generate_problem(Knapsack &problem, size_t count = 50)
+void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Option> &options)
+{
+	switch (rand() & 7)
+	{
+	case 0:
+		// Fixed burden
+		decision.option_count = 1;
+		options.push_back(Knapsack::Option{random_burden()});
+		break;
+
+	case 1:
+		// Fixed incentive
+		decision.option_count = 1;
+		options.push_back(Knapsack::Option{0, random_value(random_burden()) - random_value(random_burden())});
+		break;
+			
+	case 2: case 3: case 4:
+		// Binary choice
+		{
+			float burden = random_burden(), value = random_value(burden);
+
+			decision.option_count = 2;
+			options.push_back(Knapsack::Option{0,0});
+			options.push_back(Knapsack::Option{burden, value});
+		}
+		break;
+
+	case 5: case 6:
+		// Multiple choice, orderly
+		{
+			float burden = 0.f, value = 0.f;
+			unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+			for (unsigned i = 0; i < count; ++i)
+			{
+				float new_burden = random_burden() * (2.f/count);
+				burden += new_burden;
+				value += random_value(new_burden);
+				Knapsack::Option option = {burden, value};
+				options.push_back(option);
+				++decision.option_count;
+			}
+		}
+		break;
+
+	case 7: default:
+		// Multiple choice, chaotic
+		{
+			unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+			for (unsigned i = 0; i < count; ++i)
+			{
+				float burden = random_burden() * 2.f;
+				float value = random_value(burden);
+				Knapsack::Option option = {burden, value};
+				options.push_back(option);
+				++decision.option_count;
+			}
+		}
+		break;
+	}
+
+	decision.options = &options[options.size() - decision.option_count];
+}
+
+void generate_problem(Knapsack &knapsack, size_t count = 50)
 {
 	static std::vector<Knapsack::Decision> decisions;
 	static std::vector<Knapsack::Option>   options;
@@ -149,74 +212,14 @@ void generate_problem(Knapsack &problem, size_t count = 50)
 	decisions.clear();
 	options.clear();
 
+	// Generate a list of decisions
 	for (unsigned i = 0; i < count; ++i)
 	{
-		switch (rand() & 7)
-		{
-		case 0:
-			// Fixed burden
-			decisions.emplace_back(Knapsack::Decision());
-			decisions.back().option_count = 1;
-			options.push_back(Knapsack::Option{random_burden()});
-			break;
-
-		case 1:
-			// Fixed incentive
-			decisions.emplace_back(Knapsack::Decision());
-			decisions.back().option_count = 1;
-			options.push_back(Knapsack::Option{0, random_value(random_burden()) - random_value(random_burden())});
-			break;
-			
-		case 2: case 3: case 4:
-			// Binary choice
-			{
-				float burden = random_burden(), value = random_value(burden);
-
-				decisions.emplace_back(Knapsack::Decision());
-				decisions.back().option_count = 2;
-				options.push_back(Knapsack::Option{0,0});
-				options.push_back(Knapsack::Option{burden, value});
-			}
-			break;
-
-		case 5: case 6:
-			// Multiple choice, orderly
-			{
-				decisions.emplace_back(Knapsack::Decision());
-				auto &decision = decisions.back();
-				float burden = 0.f, value = 0.f;
-				unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
-				for (unsigned i = 0; i < count; ++i)
-				{
-					float new_burden = random_burden() * (2.f/count);
-					burden += new_burden;
-					value += random_value(new_burden);
-					Knapsack::Option option = {burden, value};
-					options.push_back(option);
-					++decision.option_count;
-				}
-			}
-			break;
-
-		case 7: default:
-			// Multiple choice, chaotic
-			{
-				decisions.emplace_back(Knapsack::Decision());
-				auto &decision = decisions.back();
-				unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
-				for (unsigned i = 0; i < count; ++i)
-				{
-					float burden = random_burden() * (2.f/count);
-					float value = random_value(burden);
-					Knapsack::Option option = {burden, value};
-					options.push_back(option);
-					++decision.option_count;
-				}
-			}
-			break;
-		}
+		decisions.emplace_back(Knapsack::Decision());
+		generate_decision(decisions.back(), options);
 	}
 
+	// Set the option-list pointers
 	Knapsack::Option *option = options.data();
 	for (auto &d : decisions)
 	{
@@ -224,14 +227,15 @@ void generate_problem(Knapsack &problem, size_t count = 50)
 		option += d.option_count;
 	}
 
-	problem.decisions.clear();
+	// Formulate a knapsack problem
+	knapsack.decisions.clear();
 	for (auto &d : decisions)
 	{
-		problem.add_decision(&d);
+		knapsack.add_decision(&d);
 	}
 }
 
-int main(int argc, char **argv)
+void test_knapsack()
 {
 	Knapsack problem;
 
@@ -335,7 +339,7 @@ int main(int argc, char **argv)
 			}
 			else if (s[0] == 'q' || s[0] == 'Q')
 			{
-				return 0;
+				return;
 			}
 			else if (s[0] == 's' || s[0] == 'S')
 			{
@@ -350,4 +354,41 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+}
+
+class SimSetting : public Setting
+{
+public:
+	std::vector<Option_t> options;
+
+	SimSetting() :
+		Setting(nullptr, 0)
+	{
+		generate_decision(_decision, options);
+	}
+};
+
+void test_goblin()
+{
+	while (true)
+	{
+		Goblin goblin;
+
+		std::list<SimSetting> scenario;
+
+		cout << "Generating a new performance control scenario." << endl;
+
+		for (size_t i = 0; i < 50; ++i)
+		{
+			scenario.emplace_back();
+			goblin.add(&scenario.back());
+		}
+
+
+	}
+}
+
+int main(int argc, char **argv)
+{
+	test_knapsack();
 }
