@@ -41,8 +41,8 @@ namespace perf_goblin
 
 		using Knapsack_t     = Knapsack_<economy_t>;
 		using choice_index_t = typename Knapsack_t::choice_index_t;
-		using Decision_t     = typename Knapsack_t::decision_t;
-		using Option_t       = typename Knapsack_t::option_t;
+		using Decision_t     = typename Knapsack_t::Decision;
+		using Option_t       = typename Knapsack_t::Option;
 
 		using strategy_index_t = choice_index_t;
 
@@ -159,8 +159,8 @@ namespace perf_goblin
 
 		using Knapsack_t     = Knapsack_<economy_t>;
 		using choice_index_t = typename Knapsack_t::choice_index_t;
-		using Decision_t     = typename Knapsack_t::decision_t;
-		using Option_t       = typename Knapsack_t::option_t;
+		using Decision_t     = typename Knapsack_t::Decision;
+		using Option_t       = typename Knapsack_t::Option;
 
 	private:
 		friend class Goblin_<economy_t>;

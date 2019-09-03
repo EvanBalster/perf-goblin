@@ -374,17 +374,17 @@ void test_goblin()
 	{
 		Goblin goblin;
 
-		std::list<SimSetting> scenario;
+		//std::list<SimSetting> scenario;
 
 		cout << "Generating a new performance control scenario." << endl;
 
-		for (size_t i = 0; i < 50; ++i)
+		/*for (size_t i = 0; i < 50; ++i)
 		{
 			scenario.emplace_back();
 			goblin.add(&scenario.back());
-		}
+		}*/
 
-
+		return;
 	}
 }
 
