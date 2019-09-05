@@ -4,8 +4,8 @@
 #include <string>
 #include <cmath>
 #include <ctime>
-#include <cstdlib>
 #include <chrono>
+#include <random>
 
 #include "knapsack.h"
 #include "goblin.h"
@@ -15,6 +15,10 @@ using namespace perf_goblin;
 
 using std::cout;
 using std::endl;
+
+
+static std::random_device rand_dev;
+static std::mt19937       random;
 
 
 std::ostream& operator<<(std::ostream &out, const Knapsack::Option &option)
@@ -40,15 +44,23 @@ std::ostream& operator<<(std::ostream &out, const Knapsack::Stats &stats)
 
 static float random_burden()
 {
-	unsigned rv = rand();
+	unsigned rv = random();
 	return .2f + .8f * + ((rv & 255u) / 255.f) * (((rv >> 8u) & 255u) / 2.55f);
 }
 
 static float random_value(float burden)
 {
-	unsigned rv = rand();
+	unsigned rv = random();
 	float uncorrelated_val = ((rv & 255u) / 255.f) * (((rv >> 8u) & 255u) / 2.55f);
 	return std::sqrt(burden * uncorrelated_val);
+}
+
+static float random_capacity(size_t decisions)
+{
+	float capacity = 0.f;
+	size_t N = decisions;
+	for (size_t i = N/2; i < N; ++i) capacity += random_burden();
+	return capacity;
 }
 
 void write_svg(std::ostream &out, Knapsack &problem, float max_burden)
@@ -143,7 +155,7 @@ void describe_problem(std::ostream &out, Knapsack &problem)
 
 void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Option> &options)
 {
-	switch (rand() & 7)
+	switch (random() & 7)
 	{
 	case 0:
 		// Fixed burden
@@ -172,7 +184,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 		// Multiple choice, orderly
 		{
 			float burden = 0.f, value = 0.f;
-			unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+			unsigned count = 2u + (1u + (random() & 3u)) * (1u + (random() & 7u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float new_burden = random_burden() * (2.f/count);
@@ -188,7 +200,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 	case 7: default:
 		// Multiple choice, chaotic
 		{
-			unsigned count = 2u + (1u + (rand() & 3u)) * (1u + (rand() & 7u));
+			unsigned count = 2u + (1u + (random() & 3u)) * (1u + (random() & 7u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float burden = random_burden() * 2.f;
@@ -252,12 +264,7 @@ void test_knapsack()
 		cout << "  problem:" << endl;
 
 		unsigned precision = 30;
-		float max_burden = 0.f;
-		{
-			size_t N = problem.decisions.size();
-			for (size_t i = N/2; i < N; ++i)
-				max_burden += random_burden();
-		}
+		float max_burden = random_capacity(problem.decisions.size());
 
 		{
 			size_t total_options = 0;
@@ -359,12 +366,85 @@ void test_knapsack()
 class SimSetting : public Setting
 {
 public:
-	std::vector<Option_t> options;
+	choice_index_t choice_index = 0;
 
-	SimSetting() :
-		Setting(nullptr, 0)
+	std::vector<Option> optionVec;
+	Options            _options;
+
+	std::vector<std::normal_distribution<float>> costs;
+
+	unsigned random_steps = 1;
+
+	Measurement measure;
+
+	std::string _id;
+
+	SimSetting()
 	{
-		generate_decision(_decision, options);
+		Knapsack_<economy_t>::Decision tmp_decision;
+		std::vector<Knapsack_<economy_t>::Option> tmp_options;
+		generate_decision(tmp_decision, tmp_options);
+
+		// Cost generators
+		std::uniform_real_distribution<float> exp_range{std::log(1.01f), std::log(2.5f)};
+		for (auto &option : tmp_options)
+		{
+			optionVec.push_back({option.value});
+			costs.emplace_back(
+				std::log(std::max(option.burden, 1e-20f)),
+				exp_range(random));
+		}
+		_options.options = optionVec.data();
+		_options.option_count = Goblin::choice_index_t(optionVec.size());
+
+		// Generate ID
+		for (unsigned i = 0; i < 12; ++i)
+		{
+			_id.push_back('a' + (random()%26));
+		}
+	}
+
+	virtual choice_index_t choice_default() const override
+	{
+		return choice_index;
+	}
+	void choice_set(
+		choice_index_t   _choice_index,
+		strategy_index_t strategy_index) override
+	{
+		choice_index = _choice_index;
+	}
+
+	const Options &options() override
+	{
+		return _options;
+	}
+	const Option &chosen()
+	{
+		return _options.options[choice_index];
+	}
+
+	Measurement measurement() override
+	{
+		Measurement m = measure;
+		measure.choice = NO_CHOICE;
+		//if (m.valid())
+		//	cout << "Prf[" << _id << "]: " << m.choice << " #" << m.burden << endl;
+		return m;
+	}
+
+	void update()
+	{
+		measure.burden = std::exp(costs[choice_index](random));
+		measure.choice = choice_index;
+	}
+
+	const std::string &id() const override    {return _id;}
+
+	float expect_mean(unsigned option_index)
+	{
+		auto &o = costs[option_index];
+		return std::exp(o.mean() + .5f*o.stddev()*o.stddev());
 	}
 };
 
@@ -374,21 +454,148 @@ void test_goblin()
 	{
 		Goblin goblin;
 
-		//std::list<SimSetting> scenario;
+		auto &knapsack = goblin.knapsack();
+
+		std::list<SimSetting> scenario;
 
 		cout << "Generating a new performance control scenario." << endl;
 
-		/*for (size_t i = 0; i < 50; ++i)
+		for (size_t i = 0; i < 50; ++i)
 		{
 			scenario.emplace_back();
 			goblin.add(&scenario.back());
-		}*/
+		}
 
-		return;
+		float capacity = random_capacity(scenario.size());
+		size_t precision = 30;
+
+		size_t option_count = 0;
+		for (auto &s : scenario) option_count += s.options().option_count;
+
+		{
+			cout << "  capacity:     #" << capacity << endl;
+			cout << "  precision:     " << precision << endl;
+			cout << "  settings:      " << scenario.size()
+				<< ", totaling " << option_count << " options" << endl;
+			cout << "  measure quota: " << goblin.config.measure_quota << endl;
+		}
+
+		float knowledge_max = option_count * goblin.config.measure_quota;
+
+		cout << "Running simulation..." << endl;
+		size_t frames = 0, frames_overload = 0;
+		SimSetting::burden_t load_total = {}, load_pess = {}, high_load_total = {}, light_load_total = {};
+		SimSetting::value_t value_total = 0.f;
+
+		for (size_t s = 0; s <= 14; ++s)
+		{
+			unsigned explored_count = 0;
+			float knowledge_count = 0;
+
+			size_t frame_quota = size_t(1) << s;
+
+			while (frames < frame_quota)
+			{
+				++frames;
+
+				// Update goblin
+				goblin.update(capacity, precision);
+
+				// Update all settings...
+				for (auto &setting : scenario) setting.update();
+
+				// Calculate stats for this frame
+				SimSetting::burden_t net_cost = 0.f;
+				SimSetting::value_t  net_value = 0.f;
+				knowledge_count = 0;
+				explored_count = 0;
+				for (auto &setting : scenario)
+				{
+					net_cost += setting.measure.burden;
+					net_value += setting.chosen().value;
+
+					if (auto est = goblin.get_estimates(setting.id()))
+					{
+						if (est->fully_explored) ++explored_count;
+
+						for (unsigned i = 0; i < est->count; ++i)
+							knowledge_count += std::min(
+								est->estimates[i].this_run.count(),
+								goblin.config.measure_quota);
+					}
+				}
+
+				// Accumulate stats
+				load_total += net_cost;
+				load_pess += knapsack.stats.chosen.net_burden.sigma_offset(knapsack.economy.sigmas);
+				high_load_total += knapsack.stats.highest.net_burden.sigma_offset(knapsack.economy.sigmas);
+				light_load_total += knapsack.stats.lightest.net_burden.sigma_offset(knapsack.economy.sigmas);
+				value_total += net_value;
+				if (net_cost > capacity) ++frames_overload;
+			}
+
+			size_t total_data = 0;
+			for (auto &s : scenario)
+			{
+				auto *est = goblin.get_estimates(s.id());
+				if (est) total_data += est->data_count;
+			}
+
+			cout << "  after " << frames << " frames:" << endl;
+			cout << "     over-budget:    " << frames_overload << "/" << frames << " frames" << endl;
+			cout << "     data collected: " << total_data << " measurements" << endl;
+			cout << "     profiling data: " << (100.f * knowledge_count / knowledge_max) << "%" << endl;
+			cout << "     fully explored: " << explored_count << "/" << scenario.size() << " settings" << endl;
+			cout << "     mean workload:  " << (100.f * load_total / (capacity*frames)) << "%" << endl;
+			cout << "     pess.workload:  " << (100.f * load_pess / (capacity*frames)) << "%" << endl;
+			cout << "     mean burden:    #" << (load_total / frames)
+				<< " / high: #" << (high_load_total / frames)
+				<< " / light: #" << (light_load_total / frames) << endl;
+			cout << "     mean value:     $" << (value_total / frames)
+				<< " / high: $" << knapsack.stats.highest.net_value
+				<< " / light: $" << knapsack.stats.lightest.net_value << endl;
+
+		}
+		
+
+		while (true)
+		{
+			cout << "What now?\n"
+				"  R = go again (default action)\n"
+				"  Q = quit\n"
+				">> ";
+			std::string s;
+			std::getline(std::cin, s);
+
+			if (s.length() == 0 || s[0] == 'r' || s[0] == 'R' || s[0] == '\r' || s[0] == '\n')
+			{
+				break;
+			}
+			/*else if (s[0] == 'v' || s[0] == 'V')
+			{
+				describe_problem(cout, goblin.knapsack);
+			}*/
+			else if (s[0] == 'q' || s[0] == 'Q')
+			{
+				return;
+			}
+			/*else if (s[0] == 's' || s[0] == 'S')
+			{
+				std::ofstream out("solution.svg");
+				write_svg(out, problem, max_burden);
+				if (out.good()) cout << "saved to solution.svg" << endl;
+				else            cout << "couldn't save to solution.svg" << endl;
+			}*/
+			else
+			{
+				cout << "unknown command." << endl;
+			}
+		}
 	}
 }
 
 int main(int argc, char **argv)
 {
+	test_goblin();
 	test_knapsack();
 }
