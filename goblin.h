@@ -41,6 +41,9 @@ namespace perf_goblin
 		{
 			base_burden_t mean;
 			base_burden_t var;
+			
+			// TEMPORARY
+			operator base_burden_t() const    {return mean;}
 
 			burden_t  operator* (const scalar_t  s) const    {return {mean/s, var/(s*s)};}
 			burden_t &operator*=(const scalar_t  s)          {mean *= s; var *= s*s; return *this;}
@@ -508,7 +511,6 @@ namespace perf_goblin
 		_knapsack.decide({capacity, economy_t::trivial()}, precision);
 	}
 }
-
 
 #if 0
 /*

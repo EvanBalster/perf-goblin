@@ -272,22 +272,25 @@ namespace perf_goblin
 
 			// Identify the highest-scoring solution that is not over-burden
 			{
-				Minimum strategy = minimums.decide(economy, capacity);
+				Minimum solution = minimums.decide(economy, capacity);
+				
+				std::cout << "SOLUTION: #" << solution.net_burden << " @" << solution.net_score
+					<< " is less than #" << capacity << std::endl;
 
 				index_t i = decisions.size();
 				while (true)
 				{
 					--i;
 					Decision &decision = *decisions[i];
-					assert(strategy.choice <= decision.option_count);
-					decision.choice = strategy.choice;
-					score_t next_score = strategy.net_score - decision.chosen().score;
+					assert(solution.choice <= decision.option_count);
+					decision.choice = solution.choice;
+					score_t next_score = solution.net_score - decision.chosen().score;
 					if (i == 0)
 					{
 						assert(next_score == 0);
 						break;
 					}
-					strategy = minimums(i-1, next_score);
+					solution = minimums(i-1, next_score);
 				}
 			}
 
@@ -295,6 +298,11 @@ namespace perf_goblin
 			stats.chosen = Stats();
 			for (Decision *decision : decisions) stats.chosen += decision->chosen();
 			assert(economy.lesser(stats.chosen.net_burden, capacity));
+			
+			/*std::cout << "SOLUTION STATS:"
+				<< " #" << stats.chosen.net_burden
+				<< " $" << stats.chosen.net_value
+				<< " @" << stats.chosen.net_score << std::endl;*/
 			return true;
 		}
 

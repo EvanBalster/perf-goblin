@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <fstream>
 #include <string>
+#include <list>
 #include <cmath>
 #include <ctime>
 #include <chrono>
@@ -18,7 +19,7 @@ using std::endl;
 
 
 static std::random_device rand_dev;
-static std::mt19937       random;
+static std::mt19937       rand_gen;
 
 
 std::ostream& operator<<(std::ostream &out, const Knapsack::Option &option)
@@ -44,13 +45,13 @@ std::ostream& operator<<(std::ostream &out, const Knapsack::Stats &stats)
 
 static float random_burden()
 {
-	unsigned rv = random();
+	unsigned rv = rand_gen();
 	return .2f + .8f * + ((rv & 255u) / 255.f) * (((rv >> 8u) & 255u) / 2.55f);
 }
 
 static float random_value(float burden)
 {
-	unsigned rv = random();
+	unsigned rv = rand_gen();
 	float uncorrelated_val = ((rv & 255u) / 255.f) * (((rv >> 8u) & 255u) / 2.55f);
 	return std::sqrt(burden * uncorrelated_val);
 }
@@ -155,7 +156,7 @@ void describe_problem(std::ostream &out, Knapsack &problem)
 
 void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Option> &options)
 {
-	switch (random() & 7)
+	switch (rand_gen() & 7)
 	{
 	case 0:
 		// Fixed burden
@@ -184,7 +185,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 		// Multiple choice, orderly
 		{
 			float burden = 0.f, value = 0.f;
-			unsigned count = 2u + (1u + (random() & 3u)) * (1u + (random() & 7u));
+			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 7u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float new_burden = random_burden() * (2.f/count);
@@ -200,7 +201,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 	case 7: default:
 		// Multiple choice, chaotic
 		{
-			unsigned count = 2u + (1u + (random() & 3u)) * (1u + (random() & 7u));
+			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 7u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float burden = random_burden() * 2.f;
@@ -392,7 +393,7 @@ public:
 			optionVec.push_back({option.value});
 			costs.emplace_back(
 				std::log(std::max(option.burden, 1e-20f)),
-				exp_range(random));
+				exp_range(rand_gen));
 		}
 		_options.options = optionVec.data();
 		_options.option_count = Goblin::choice_index_t(optionVec.size());
@@ -400,7 +401,7 @@ public:
 		// Generate ID
 		for (unsigned i = 0; i < 12; ++i)
 		{
-			_id.push_back('a' + (random()%26));
+			_id.push_back('a' + (rand_gen()%26));
 		}
 	}
 
@@ -435,7 +436,7 @@ public:
 
 	void update()
 	{
-		measure.burden = std::exp(costs[choice_index](random));
+		measure.burden = std::exp(costs[choice_index](rand_gen));
 		measure.choice = choice_index;
 	}
 
