@@ -185,7 +185,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 		// Multiple choice, orderly
 		{
 			float burden = 0.f, value = 0.f;
-			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 7u));
+			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 3u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float new_burden = random_burden() * (2.f/count);
@@ -201,7 +201,7 @@ void generate_decision(Knapsack::Decision &decision, std::vector<Knapsack::Optio
 	case 7: default:
 		// Multiple choice, chaotic
 		{
-			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 7u));
+			unsigned count = 2u + (1u + (rand_gen() & 3u)) * (1u + (rand_gen() & 3u));
 			for (unsigned i = 0; i < count; ++i)
 			{
 				float burden = random_burden() * 2.f;
@@ -387,7 +387,9 @@ public:
 		generate_decision(tmp_decision, tmp_options);
 
 		// Cost generators
-		std::uniform_real_distribution<float> exp_range{std::log(1.01f), std::log(2.5f)};
+		std::uniform_real_distribution<float> exp_range
+			//{1e-20f, 1e-20f};
+			{std::log(1.02f), std::log(1.25f)};
 		for (auto &option : tmp_options)
 		{
 			optionVec.push_back({option.value});
@@ -397,6 +399,19 @@ public:
 		}
 		_options.options = optionVec.data();
 		_options.option_count = Goblin::choice_index_t(optionVec.size());
+
+#if 0
+		std::cout << "some measures:";
+		Goblin::burden_stat_t stat;
+		for (unsigned i = 0; i < 100; ++i)
+		{
+			update();
+			auto m = measurement();
+			if (i < 4) std::cout << " #" << m.burden;
+			stat.push_decay(m.burden, 1.f - 1.f/30.f);
+		}
+		std::cout << " .. mean #" << stat.mean() << " sigma #" << stat.variance() << std::endl;
+#endif
 
 		// Generate ID
 		for (unsigned i = 0; i < 12; ++i)
@@ -457,8 +472,11 @@ void test_goblin()
 
 		auto &knapsack = goblin.knapsack();
 
+		auto &chosen = knapsack.stats.chosen;
+
 		std::list<SimSetting> scenario;
 
+		cout << std::fixed << std::setprecision(2);
 		cout << "Generating a new performance control scenario." << endl;
 
 		for (size_t i = 0; i < 50; ++i)
@@ -467,14 +485,30 @@ void test_goblin()
 			goblin.add(&scenario.back());
 		}
 
-		float capacity = random_capacity(scenario.size());
+#if 0
+		// DEBUG: give the goblin complete knowledge of (non-varying) burdens
+		for (auto &setting : scenario)
+		{
+			size_t count = setting.options().option_count;
+			for (size_t i = 0; i < count; ++i)
+			{
+				setting.choice_set(i, 0);
+				setting.update();
+				auto m = setting.measurement();
+				goblin.make_certain(setting.id(), i, count, {m.burden, 0});
+			}
+		}
+#endif
+
+		Goblin::capacity_t capacity =
+			{1.5f * random_capacity(scenario.size()), 3};
 		size_t precision = 30;
 
 		size_t option_count = 0;
 		for (auto &s : scenario) option_count += s.options().option_count;
 
 		{
-			cout << "  capacity:     #" << capacity << endl;
+			cout << "  capacity:     #" << capacity.limit << endl;
 			cout << "  precision:     " << precision << endl;
 			cout << "  settings:      " << scenario.size()
 				<< ", totaling " << option_count << " options" << endl;
@@ -485,10 +519,12 @@ void test_goblin()
 
 		cout << "Running simulation..." << endl;
 		size_t frames = 0, frames_overload = 0;
-		SimSetting::burden_t load_total = {}, load_pess = {}, high_load_total = {}, light_load_total = {};
+		SimSetting::burden_t load_total = {}, load_pess = {},
+			high_load_total = {}, light_load_total = {},
+			last_net_burden = {};
 		SimSetting::value_t value_total = 0.f;
 
-		for (size_t s = 0; s <= 14; ++s)
+		for (size_t s = 3; s <= 14; ++s)
 		{
 			unsigned explored_count = 0;
 			float knowledge_count = 0;
@@ -506,33 +542,38 @@ void test_goblin()
 				for (auto &setting : scenario) setting.update();
 
 				// Calculate stats for this frame
-				SimSetting::burden_t net_cost = 0.f;
+				SimSetting::burden_t net_burden = 0.f;
 				SimSetting::value_t  net_value = 0.f;
 				knowledge_count = 0;
 				explored_count = 0;
 				for (auto &setting : scenario)
 				{
-					net_cost += setting.measure.burden;
+					net_burden += setting.measure.burden;
 					net_value += setting.chosen().value;
 
 					if (auto est = goblin.get_estimates(setting.id()))
 					{
 						if (est->fully_explored) ++explored_count;
 
-						for (unsigned i = 0; i < est->count; ++i)
+						knowledge_count += est->exploration;
+
+						/*for (unsigned i = 0; i < est->count; ++i)
 							knowledge_count += std::min(
 								est->estimates[i].this_run.count(),
-								goblin.config.measure_quota);
+								goblin.config.measure_quota);*/
 					}
 				}
 
+				//assert(net_burden == chosen.net_burden.mean);
+
 				// Accumulate stats
-				load_total += net_cost;
-				load_pess += knapsack.stats.chosen.net_burden.sigma_offset(knapsack.economy.sigmas);
-				high_load_total += knapsack.stats.highest.net_burden.sigma_offset(knapsack.economy.sigmas);
-				light_load_total += knapsack.stats.lightest.net_burden.sigma_offset(knapsack.economy.sigmas);
+				last_net_burden = net_burden;
+				load_total += net_burden;
+				load_pess += chosen.net_burden.sigma_offset(capacity.sigmas);
+				high_load_total += knapsack.stats.highest.net_burden.sigma_offset(capacity.sigmas);
+				light_load_total += knapsack.stats.lightest.net_burden.sigma_offset(capacity.sigmas);
 				value_total += net_value;
-				if (net_cost > capacity) ++frames_overload;
+				if (!Goblin::economy_t::acceptable(net_burden, capacity.limit)) ++frames_overload;
 			}
 
 			size_t total_data = 0;
@@ -543,27 +584,56 @@ void test_goblin()
 			}
 
 			cout << "  after " << frames << " frames:" << endl;
-			cout << "     over-budget:    " << frames_overload << "/" << frames << " frames" << endl;
-			cout << "     data collected: " << total_data << " measurements" << endl;
-			cout << "     profiling data: " << (100.f * knowledge_count / knowledge_max) << "%" << endl;
-			cout << "     fully explored: " << explored_count << "/" << scenario.size() << " settings" << endl;
-			cout << "     mean workload:  " << (100.f * load_total / (capacity*frames)) << "%" << endl;
-			cout << "     pess.workload:  " << (100.f * load_pess / (capacity*frames)) << "%" << endl;
-			cout << "     mean burden:    #" << (load_total / frames)
+			cout << "     over-budget:    " << (100.f * frames_overload / frames) << "%"
+				<< " (" << frames_overload << "/" << frames << " frames)" << endl;
+			cout << "     profiling data: " << (100.f * knowledge_count / knowledge_max) << "%"
+				<< ", fully explored " << explored_count << "/" << scenario.size() << " settings"
+				<< " using " << total_data << " measurements" << endl;
+			cout << "     mean workload:  " << (100.f * load_total / (capacity.limit*frames)) << "%"
+				<< " (#" << (load_total / frames) << " / #" << capacity.limit << ")" << endl;
+			cout << "     pess.workload:  " << (100.f * load_pess / (capacity.limit*frames)) << "%"
+				<< " (#" << (load_pess / frames) << " / #" << capacity.limit << ")" << endl;
+			cout << "     pess.burden:    #" << (load_pess / frames)
 				<< " / high: #" << (high_load_total / frames)
 				<< " / light: #" << (light_load_total / frames) << endl;
 			cout << "     mean value:     $" << (value_total / frames)
 				<< " / high: $" << knapsack.stats.highest.net_value
 				<< " / light: $" << knapsack.stats.lightest.net_value << endl;
-
+			cout << "     last choice:    #(" << chosen.net_burden.mean
+				<< " ~ " << std::sqrt(chosen.net_burden.var) << ") -> #" << last_net_burden
+				<< " $" << chosen.net_value << std::endl;
 		}
+
+		cout << endl;
+		{
+			size_t n = 0;
+			for (auto &setting : scenario)
+			{
+				if (setting.options().option_count <= 1) continue;
+				auto *decision = goblin.get_decision(&setting);
+				auto *est = goblin.get_estimates(setting.id());
+				auto &first = est->estimates[0];
+				std::cout << "stg " << (n+1) << " study: ";
+				for (size_t i = 0; i < setting.options().option_count; ++i)
+				{
+					auto &entry = est->estimates[i];
+					std::cout << int(entry.this_run.count())
+						<< ":{#" << entry.this_run.mean() << " ~#" << decision->options[i].burden.mean
+						<< " $" << setting.options().options[i].value << "} ";
+				}
+				std::cout << "/" << goblin.config.measure_quota << std::endl;
+				//std::cout << "o1 m #" << first.this_run.mean() << " sig #" << first.this_run.deviation() << std::endl;
+				if (++n >= 9) break;
+			}
+		}
+		cout << endl;
 		
 
 		while (true)
 		{
 			cout << "What now?\n"
 				"  R = go again (default action)\n"
-				"  Q = quit\n"
+				"  Q = quit (proceed to knapsack test)\n"
 				">> ";
 			std::string s;
 			std::getline(std::cin, s);
