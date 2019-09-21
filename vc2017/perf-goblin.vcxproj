@@ -118,8 +118,10 @@
     <ClCompile Include="..\main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\economy.h" />
     <ClInclude Include="..\goblin.h" />
     <ClInclude Include="..\knapsack.h" />
+    <ClInclude Include="..\profile.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

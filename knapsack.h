@@ -21,48 +21,13 @@
 #include <algorithm> // std::min, std::max, std::lower_bound
 #include <cassert>
 #include <vector>
+#include <cstdint>
+
+#include "economy.h"
 
 
 namespace perf_goblin
 {
-	/*
-		An economy describes a burden and a value.
-			Value represents something we want to maximize.
-			Burden represents quantities of one or more limited resources.
-			The most common economy uses a float burden and float value.
-	*/
-	template<
-		typename T_Burden,
-		typename T_Value       = float>
-	struct Economy_
-	{
-		using burden_t   = T_Burden;
-		using value_t    = T_Value;
-
-		// capacity_t is the same as burden_t in simple economies.
-		using capacity_t = burden_t;
-
-		// scalar_t is 
-		using scalar_t   = T_Burden;
-
-		// True if the burden value is scalar.
-		static const bool burden_is_scalar = true;
-
-		// Combine two burdens.
-		static constexpr burden_t trivial   ()    {return T_Burden(0);} //{return std::numeric_limits<T_Burden>::zero();}
-		static constexpr burden_t impossible()    {return std::numeric_limits<T_Burden>::infinity();}
-		static constexpr bool is_possible(const burden_t burden)    {return burden < impossible();}
-
-		// Return whether one burden is strictly less than another.
-		//   Probabilistic economies 
-		static bool lesser(const burden_t &lhs, const burden_t &rhs)    {return (lhs < rhs);}
-
-		// Return whether the burden is possible within the capacity
-		static bool acceptable(const burden_t &lhs, const capacity_t &rhs)    {return (lhs < rhs);}
-	};
-
-	using Economy_f = Economy_<float>;
-
 	/*
 		This class models the multiple-choice knapsack problem.
 			
@@ -152,8 +117,8 @@ namespace perf_goblin
 		// Statistics describing a set of decisions.
 		struct Stats
 		{
-			burden_t net_burden = economy_t::trivial();
-			value_t  net_value  = 0;
+			burden_t net_burden = economy_t::zero();
+			value_t  net_value  = economy_t::zero();
 			score_t  net_score  = 0;
 
 			Stats &operator+=(const Option &o)
@@ -169,7 +134,7 @@ namespace perf_goblin
 		struct Minimum
 		{
 			score_t        net_score  = score_t(0);
-			burden_t       net_burden = economy_t::impossible();
+			burden_t       net_burden = economy_t::infinite();
 			choice_index_t choice     = NO_CHOICE;
 
 			// Ordering
@@ -338,7 +303,8 @@ namespace perf_goblin
 				previous,
 				current;
 
-			current.reserve(stats.highest.net_score);
+			previous.reserve(stats.highest.net_score);
+			current .reserve(stats.highest.net_score);
 
 			auto consider = [&](const Minimum &candidate)
 			{

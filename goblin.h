@@ -13,95 +13,23 @@
 		It tracks recent and overall costs to estimate cost accurately.
 */
 
-#include <unordered_map> // Goblin's estimate and setting maps
-#include <string>        // Used to classify settings for profiling.
+#include <unordered_map> // Goblin's settings map
 
 #include "knapsack.h"
+#include "economy.h"
+#include "profile.h"
 
 
 namespace perf_goblin
 {
-	template<typename T_Economy> class Setting_;
+	
+	template<typename T_Economy>     class Goblin_;
+	template<typename T_Economy>     class Setting_;
+
+	using Goblin  = Goblin_ <Economy_f>;
 	using Setting = Setting_<Economy_f>;
 
-	/*
-		An economy for normally-distributed burdens.
-			This allows us to consolidate independent variations in cost.
-	*/
-	template<typename T_BaseEconomy>
-	class Economy_Normal_ : public T_BaseEconomy
-	{
-	public:
-		using base_t        = T_BaseEconomy;
-		using base_burden_t = typename base_t::burden_t;
-		using base_capac_t  = typename base_t::capacity_t;
-		using value_t       = typename base_t::value_t;
-		using scalar_t      = typename base_t::scalar_t;
-
-		struct burden_t
-		{
-			base_burden_t mean;
-			base_burden_t var;
-			
-			// TEMPORARY
-			operator base_burden_t() const    {return mean;}
-
-			burden_t  operator* (const scalar_t  s) const    {return {mean*s, var*(s*s)};}
-			burden_t &operator*=(const scalar_t  s)          {mean *= s; var *= s*s; return *this;}
-			burden_t  operator/ (const scalar_t  s) const    {return {mean/s, var/(s*s)};}
-			burden_t &operator/=(const scalar_t  s)          {mean /= s; var /= s*s; return *this;}
-			burden_t  operator+ (const burden_t &o) const    {return {mean+o.mean, var+o.var};}
-			burden_t &operator+=(const burden_t &o)          {mean += o.mean; var += o.var; return *this;}
-			burden_t  operator- (const burden_t &o) const    {return {mean-o.mean, var+o.var};}
-			burden_t &operator-=(const burden_t &o)          {mean -= o.mean; var += o.var; return *this;}
-
-			base_burden_t sigma_offset(const scalar_t sigmas) const
-			{
-				return mean + sigmas * std::sqrt(var);
-			}
-		};
-
-		/*
-			A maximum capacity that applies to mean net burden,
-				plus <sigmas> standard deviations.
-				sigmas = 3 makes for a low probability of exceeding.
-		*/
-		struct capacity_t
-		{
-			base_capac_t limit;
-			scalar_t     sigmas = 3;
-		};
-
-	public:
-		static const bool burden_is_scalar = base_t::burden_is_scalar;
-
-		static constexpr burden_t trivial   ()    {return {base_t::trivial(), base_t::trivial()};}
-		static constexpr burden_t impossible()    {return {base_t::impossible(), base_t::trivial()};}
-		static constexpr bool is_possible(const burden_t burden)    {return base_t::is_possible(burden.mean) & base_t::is_possible(burden.var);}
-
-		// Return whether one burden is expected to be less than another
-		static bool lesser(const burden_t &lhs, const burden_t &rhs)
-		{
-			// Strictly comparing means...
-			return base_t::lesser(lhs.mean, rhs.mean);
-			/*base_burden_t diff = (lhs.mean - rhs.mean);
-			diff = (diff*diff) / (sigmas*sigmas);
-			return base_t::lesser(diff, rhs.var + lhs.var - scalar_t(2)*std::sqrt(lhs.var*rhs.var));*/
-		}
-
-		static bool acceptable(const burden_t &burden, const capacity_t &capac)
-		{
-#if 0
-			assert(burden.var == 0);
-			return base_t::acceptable(burden.mean, capac.limit);
-#else
-			// (mean + E*sqrt(var)) < limit  ==>  E^2*var < (limit-mean)^2
-			if (!base_t::acceptable(burden.mean, capac.limit)) return false;
-			base_burden_t margin = capac.limit - burden.mean;
-			return base_t::lesser(capac.sigmas*capac.sigmas * burden.var, margin*margin);
-#endif
-		}
-	};
+	
 
 	/*
 		The goblin!
@@ -116,8 +44,10 @@ namespace perf_goblin
 		using scalar_t       = typename economy_t::scalar_t;
 		using value_t        = typename economy_t::value_t;
 
-		using economy_norm_t = Economy_Normal_<economy_t>;
+		using Profile_t      = Profile_<economy_t>;
+		using economy_norm_t = typename Profile_t::economy_norm_t;;
 		using burden_norm_t  = typename economy_norm_t::burden_t;
+		using burden_stat_t  = typename Profile_t::burden_stat_t;
 		using capacity_t     = typename economy_norm_t::capacity_t;
 
 		using Knapsack_t     = Knapsack_<economy_norm_t>;
@@ -130,127 +60,42 @@ namespace perf_goblin
 
 		static const choice_index_t NO_CHOICE = Knapsack_t::NO_CHOICE;
 
-		/*
-			A measurement...
-				Measured burden should ALWAYS be >= 0.
-		*/
-		struct Measurement
-		{
-			burden_t         burden   = economy_t::impossible();
-			choice_index_t   choice   = Knapsack_t::NO_CHOICE;
-			//strategy_index_t strategy = Knapsack_t::CHOICE_NONE;
-
-			bool valid() const    {return choice != Knapsack_t::NO_CHOICE;}
-		};
-
-		// Statistics on burdens.
-		struct burden_stat_t
-		{
-			scalar_t _k  = 0;
-			burden_t _mk = 0;
-			burden_t _vk = 0;
-
-			void reset()    {_k = 0; _mk = 0; _vk = 0;}
-
-			explicit operator bool() const    {return _k > 0;}
-
-			scalar_t count    () const    {return _k;}
-			burden_t mean     () const    {return _mk;}
-			burden_t variance () const    {return _vk / std::max<burden_t>(_k - 1, 1);}
-			burden_t deviation() const    {return std::sqrt(variance());}
-
-			burden_norm_t burden_norm() const    {return {mean(), variance()};}
-			void make_certain(const burden_norm_t burden)    {_k = 1e10f; _mk = burden.mean; _vk = burden.var*_k;}
-
-			burden_t mean_plus_sigmas(scalar_t sigmas)    {return mean() + deviation() * sigmas;}
-
-			void push(const burden_t burden)
-			{
-				burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
-				_mk += dm / _k;             // First frame, add burden
-				_vk += dv * (burden - _mk); // First frame, add 0
-			}
-
-			// Decay methods for calculating *recent* variance.  0 < alpha < 1.
-			void decay     (scalar_t alpha)
-			{
-				_k = 1 + (_k - 1) * alpha;
-				_vk *= alpha;
-			}
-			void push_decay(const burden_t burden, scalar_t alpha)
-			{
-				_k *= alpha;
-				burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
-				_mk += dm / _k;
-				_vk  = _vk * alpha + dv * (burden - _mk);
-			}
-		};
-
-		struct Estimate
-		{
-			burden_stat_t past_run;
-			burden_stat_t this_run;
-			burden_stat_t recent;
-		};
-
-		struct Estimates
-		{
-			size_t               data_count = 0;
-			size_t               exploration = 0;
-			bool                 fully_explored = false;
-			const choice_index_t count;
-			Estimate             estimates[1];
-
-			Estimates(choice_index_t option_count)    : count(option_count) {}
-
-			static Estimates *alloc(choice_index_t count)
-			{
-				assert(count > 0);
-				auto *e = new (new size_t[(sizeof(Estimates) + (count-1) * sizeof(Estimate) + sizeof(size_t)-1) / sizeof(size_t)]) Estimates(count);
-				for (choice_index_t i = 0; i < count; ++i) new (e->estimates+i) Estimate();
-				return e;
-			}
-			static void free(Estimates *e)    {delete[] reinterpret_cast<size_t*>(e);}
-		};
+		
+		using Settings  = std::unordered_map<Setting_t*, Decision_t>;
 
 		struct Config
 		{
-			float recent_alpha  = 1.f - 1.f/30.f;
-			float measure_quota = 30;
+			scalar_t recent_alpha  = 1.f - 1.f/30.f;
+			scalar_t anomaly_alpha = 1.f - 1.f/30.f;
+			scalar_t measure_quota = 30;
+			value_t  explore_value = 0;
+		};
+
+		struct Anomaly
+		{
+			scalar_t latest = 1;
+			scalar_t recent = 1;
 		};
 
 	public:
 		Config config;
 
 	private:
-		Knapsack_t                                 _knapsack;
-		std::unordered_map<std::string, Estimates*> estimates;
-		std::unordered_map<Setting_t*, Decision_t>  settings;
-		std::vector<Option_t>                       option_store;
-
-		Estimates &estimates_for(const std::string &id, choice_index_t option_count)
-		{
-			auto i = estimates.find(id);
-			if (i == estimates.end())
-				i = estimates.emplace(id, Estimates::alloc(option_count)).first;
-			assert(i->second->count == option_count);
-			return *i->second;
-		}
-
-		struct Conversion
-		{
-			burden_t past = 0, present = 0;
-
-			scalar_t ratio() const
-			{
-				return (past > 0 && present > 0) ? present / past : scalar_t(0);
-			}
-		}
-			conversion;
+		Profile_t             _profile, _past;
+		Settings              settings;
+		Knapsack_t            _knapsack;
+		std::vector<Option_t> option_store;
+		Anomaly               _anomaly;
 
 	public:
 		Goblin_();
 		~Goblin_();
+
+		/*
+			Overwrite performance profiles.
+		*/
+		void set_profile     (const Profile_t &profile)    {_profile = profile;}
+		void set_past_profile(const Profile_t &profile)    {_past    = profile;}
 
 		/*
 			Add & remove settings.
@@ -261,7 +106,7 @@ namespace perf_goblin
 		/*
 			Update all settings, accounting for any new measurements.
 				Alternatively, you can call subroutines separately:
-				- harvest() : collect new measurements
+				- harvest() : collect new measurements and update anomaly
 				- decide(...) : resolve all settings
 		*/
 		void update(capacity_t capacity, size_t precision);
@@ -269,32 +114,65 @@ namespace perf_goblin
 		void harvest();
 
 		/*
-			Access the knapsack solver (for stats)
+			Access the profile(s) and knapsack solver (for stats)
 		*/
-		const Knapsack_t &knapsack() const    {return _knapsack;}
+		const Knapsack_t &knapsack()     const    {return _knapsack;}
+		const Anomaly    &anomaly()      const    {return _anomaly;}
+		const Profile_t  &profile()      const    {return _profile;}
+		const Profile_t  &past_profile() const    {return _past;}
 
 		/*
-			Get estimate data...
+			Get a consolidated profile of past and current-run knowledge.
 		*/
-		const Estimates *get_estimates(std::string id) const
+		Profile_t         full_profile() const
 		{
-			auto i = estimates.find(id);
-			return (i==estimates.end()) ? nullptr : i->second;
+			scalar_t ratio = past_present_ratio();
+			if (ratio <  0) return _profile;
+			if (ratio == 0) return _past;
+			Profile_t profile = _profile;
+			for (auto &t : _past.tasks())
+				profile.assimilate(t.first, *t.second, ratio);
+			return profile;
 		}
+
+		/*
+			Calculate burden ratio between past and present profile.
+		*/
+		scalar_t past_present_ratio() const
+		{
+			scalar_t total_ratio = 0;
+			scalar_t total_weight = 0;
+			for (auto &t : _profile.tasks())
+			{
+				auto *curr = t.second;
+				if (auto *prev = _past.find(t.first))
+				{
+					for (choice_index_t i = 0; i < curr->count; ++i)
+					{
+						auto &cest = curr->estimates[i].full, &pest = prev->estimates[i].full;
+						scalar_t w = cest.count() * pest.count();
+						if (w > 0)
+						{
+							w = std::sqrt(w * cest.mean() * pest.mean());
+							total_ratio += w * (cest.mean() / pest.mean());
+							total_weight += w;
+						}
+					}
+				}
+			}
+			if (total_weight > 0) return total_ratio / total_weight;
+			else                  return scalar_t(-1);
+		}
+
+		/*
+			Access decision for a setting
+		*/
 		const Decision_t *get_decision(Setting_t *setting) const
 		{
 			auto i = settings.find(setting);
 			return (i==settings.end()) ? nullptr : &i->second;
 		}
-
-		// Provide perfect knowledge of a burden's distribution (debug)
-		void make_certain(std::string id, choice_index_t option_index, choice_index_t option_count, burden_norm_t burden)
-		{
-			estimates_for(id, option_count).estimates[option_index].this_run.make_certain(burden);
-		}
 	};
-
-	using Goblin = Goblin_<Economy_f>;
 	
 	/*
 		A setting which can be controlled by the goblin.
@@ -307,9 +185,11 @@ namespace perf_goblin
 		using burden_t       = typename economy_t::burden_t;
 		using value_t        = typename economy_t::value_t;
 
+		using Profile_t      = Profile_<economy_t>;
+		using Measurement    = typename Profile_t::Measurement;
 
 		using Goblin_t         = Goblin_<economy_t>;
-		using Measurement      = typename Goblin_t::Measurement;
+		
 		using strategy_index_t = typename Goblin_t::strategy_index_t;
 		using choice_index_t   = typename Goblin_t::choice_index_t;
 
@@ -323,6 +203,10 @@ namespace perf_goblin
 		{
 			const Option  *options;
 			choice_index_t option_count;
+
+			// Iterable.
+			const Option *begin() const    {return options;}
+			const Option *end  () const    {return options+option_count;}
 		};
 
 	private:
@@ -358,7 +242,7 @@ namespace perf_goblin
 		virtual const std::string &id() const = 0;
 
 		/*
-			Get burden measurement.  (burden_info_t::impossible() if N/A)
+			Get burden measurement.  (burden_info_t::infinite() if N/A)
 		*/
 		virtual Measurement measurement() = 0;
 	};
@@ -376,7 +260,6 @@ namespace perf_goblin
 	Goblin_<Econ>::~Goblin_()
 	{
 		while (settings.size()) remove(settings.begin()->first);
-		for (auto &i : estimates) Estimates::free(i.second);
 	}
 
 	template<typename Econ>
@@ -398,37 +281,48 @@ namespace perf_goblin
 	template<typename Econ>
 	void Goblin_<Econ>::harvest()
 	{
+		// Decay old measurements
+		_profile.decay_recent(config.recent_alpha);
+
+		// Sums for calculating anomaly
+		burden_t
+			sum_typical = economy_t::zero(),
+			sum_current = economy_t::zero();
+
 		// Harvest any new measurements
 		for (auto &pair : settings)
 		{
 			auto *setting = pair.first;
 			auto measure = setting->measurement();
 
+			// Measure...
 			if (measure.valid())
 			{
-				auto &estimates = estimates_for(setting->id(), setting->options().option_count);
-				assert(measure.choice < estimates.count);
+				// Burdens must be >= 0.
+				if (economy_t::lesser(measure.burden, economy_t::zero()))
+					measure.burden = economy_t::zero();
 
-				auto &estimate  = estimates.estimates[measure.choice];
+				// Compare with existing metrics to calculate anomaly.
+				auto entry = _profile.find(setting->id());
+				if (entry)
+				{
+					sum_typical += entry->estimates[measure.choice].full.mean();
+					sum_current += measure.burden;
+				}
 
-				++estimates.data_count;
-				if (estimate.this_run.count() >= config.measure_quota)
-				{
-					estimate.recent.push_decay(measure.burden, config.recent_alpha);
-				}
-				else
-				{
-					++estimates.exploration;
-					estimate.recent.push(measure.burden);
-				}
-				estimate.this_run.push   (measure.burden);
-
-				if (estimate.past_run)
-				{
-					conversion.past    += estimate.past_run.mean();
-					conversion.present += measure.burden;
-				}
+				// Collect into profile.
+				_profile.collect(
+					setting->id(),
+					setting->options().option_count,
+					measure);
 			}
+		}
+
+		// Estimate anomaly
+		if (economy_t::lesser(economy_t::zero(), sum_typical))
+		{
+			_anomaly.latest = sum_current / sum_typical;
+			_anomaly.recent += (1 - config.anomaly_alpha) * (_anomaly.latest - _anomaly.recent);
 		}
 	}
 
@@ -439,7 +333,9 @@ namespace perf_goblin
 		option_store.clear();
 
 		// Calculate proportion between past-run costs and this-run costs.
-		auto ratio = conversion.ratio();
+		scalar_t ratio = past_present_ratio();
+
+		static const burden_stat_t UNKNOWN_BURDEN = {};
 
 		// Calculate estimated burden for all options and generate a knapsack problem
 		for (auto &pair : settings)
@@ -449,93 +345,107 @@ namespace perf_goblin
 			const typename Setting::Options &options = setting->options();
 			decision.option_count = options.option_count;
 
-			auto &estimates = estimates_for(setting->id(), decision.option_count);
+			// Get profile data for this task
+			auto *pres = _profile.find(setting->id());
+			auto *past = _past   .find(setting->id());
 
 			// Estimate burdens for each choice.
-			if (estimates.data_count == 0)
-			{
-				// Lacking any profiler data from this run, we force to the default choice.
-				if (decision.choice >= decision.option_count) decision.choice = 0;
-				for (choice_index_t i = 0; i < options.option_count; ++i)
-				{
-					option_store.push_back(Option_t{
-						{(i == decision.choice) ? economy_t::trivial() : economy_t::impossible()},
-						options.options[i].value});
-				}
-			}
-			else
+			if (pres || (past && ratio > scalar_t(0)))
 			{
 				// Calculate a blind guess for unprofiled options?
 				burden_norm_t blind_guess;
-				choice_index_t untried_options = 0;
-				float missing_data = 0;
-				if (!estimates.fully_explored)
+				scalar_t      unexplored_burden_mod = scalar_t(1);
+				scalar_t      missing_data = 0;
+				if (!pres || !pres->fully_explored)
 				{
-					burden_norm_t lightest = economy_norm_t::impossible();
+					burden_norm_t lightest = economy_norm_t::infinite();
 
 					for (choice_index_t i = 0; i < decision.option_count; ++i)
 					{
-						auto &est = estimates.estimates[i];
+						const burden_stat_t &
+							curr = (pres ? pres->estimates[i].full : UNKNOWN_BURDEN),
+							prev = (past ? past->estimates[i].full : UNKNOWN_BURDEN);
+
 						burden_norm_t test;
 						float count = 0;
-						if      (est.this_run)
-							{count = est.this_run.count(); test = est.this_run.burden_norm();}
-						else if (est.past_run)
-							{count = est.past_run.count(); test = est.past_run.burden_norm() * ratio;}
-						else
-							++untried_options;
+						if      (curr) {count = curr.count(); test = curr.burden_norm() * _anomaly.recent;}
+						else if (prev) {count = prev.count(); test = prev.burden_norm() * ratio;}
 
-						missing_data += config.measure_quota - std::min(count, config.measure_quota);
+						missing_data += std::max<scalar_t>(0,
+							config.measure_quota - curr.count() - prev.count());
 						if (count && economy_norm_t::lesser(test, lightest)) lightest = test;
 					}
 
 					blind_guess = lightest;
-					estimates.fully_explored = (!missing_data);
+					unexplored_burden_mod = missing_data / std::max<scalar_t>(missing_data,
+						(pres ? pres->data_count : 0) +
+						(past ? past->data_count : 0));
+					if (pres) pres->fully_explored = (!missing_data);
 				}
 
 				// Estimate burdens for each option, if possible.
 				for (choice_index_t i = 0; i < decision.option_count; ++i)
 				{
 					burden_norm_t option_burden;
-					auto &est = estimates.estimates[i];
+					value_t value_bonus = economy_t::zero();
 
-					if (est.this_run)
+					const burden_stat_t &
+						recent = (pres ? pres->estimates[i].recent : UNKNOWN_BURDEN),
+						curr   = (pres ? pres->estimates[i].full   : UNKNOWN_BURDEN),
+						prev   = (past ? past->estimates[i].full   : UNKNOWN_BURDEN);
+
+					// Prior burden is based on past runs, or failing that a blind guess.
+					burden_norm_t prior_burden = (prev ?
+						(prev.burden_norm() * ratio) :
+						blind_guess);
+
+					if (curr)
 					{
-						if (est.this_run.count() < config.measure_quota)
+						if (curr.count() < config.measure_quota)
 						{
-							// Calculate burdens for this run and prior assumptions.
-							burden_norm_t current = est.this_run.burden_norm();
-							burden_norm_t prior = (est.past_run ?
-								(est.past_run.burden_norm() * ratio) :
-								(blind_guess));
-
-							// Interpolate between the two.
-							float mix = est.this_run.count() / config.measure_quota;
-							option_burden = current * mix + prior * (1.f-mix);
+							// Interpolate between data from this run and prior estimate.
+							float mix = curr.count() / config.measure_quota;
+							option_burden =
+								curr.burden_norm() * mix +
+								prior_burden       * (1.f-mix);
 						}
 						else
 						{
+							// TODO mix with full when recent measures are few
+
 							// Estimate based on recent measurements
-							option_burden = est.recent.burden_norm();
+							option_burden = recent.burden_norm();
 						}
-					}
-					else if (est.past_run)
-					{
-						// Estimate by comparing measurements from a past session.
-						option_burden = est.past_run.burden_norm() * ratio;
 					}
 					else
 					{
-						// This option is unexplored and inestimable.  Guess blindly.
-						option_burden = blind_guess *
-							scalar_t(missing_data / estimates.data_count);
-
-						// This option is unexplored and inestimable.  We'll guess it below.
-						estimates.fully_explored = false;
-						++untried_options;
+						// No profiling data from this run.  Use past data or blind guess.
+						option_burden = prior_burden;
 					}
 
-					option_store.push_back(Option_t{option_burden, options.options[i].value});
+					// Incentive to explore options further...
+					if (prev.count() + curr.count() < config.measure_quota)
+					{
+						value_bonus    = config.explore_value;
+						option_burden *= unexplored_burden_mod;
+						if (pres) pres->fully_explored = false;
+					}
+
+					// Formulate option for knapsack decision...
+					option_store.push_back(Option_t{
+						option_burden,
+						options.options[i].value + value_bonus});
+				}
+			}
+			else
+			{
+				// Lacking any profiler data from this run, we force to the default choice.
+				if (decision.choice >= decision.option_count) decision.choice = 0;
+				for (choice_index_t i = 0; i < options.option_count; ++i)
+				{
+					option_store.push_back(Option_t{
+						{(i == decision.choice) ? burden_t(economy_t::zero()) : burden_t(economy_t::infinite())},
+						options.options[i].value});
 				}
 			}
 
@@ -552,6 +462,11 @@ namespace perf_goblin
 				i += pair.second.option_count;
 			}
 		}
+
+		/*if (ratio > 0)
+		{
+			std::cout << std::flush;
+		}*/
 
 		// Finally, run the knapsack solver.
 		_knapsack.decide(capacity, precision);
