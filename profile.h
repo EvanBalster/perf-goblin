@@ -17,6 +17,86 @@ namespace perf_goblin
 	template<typename T_Economy> class Profile_;
 	using Profile_f = Profile_<Economy_f>;
 
+	template<typename T_Economy> struct BurdenStat_;
+	using BurdenStat_f = BurdenStat_<Economy_f>;
+
+	/*
+		A class for estimating burdens based on many samples.
+	*/
+	template<typename T_Economy>
+	struct BurdenStat_
+	{
+	public:
+		using economy_t = T_Economy;
+		using burden_t  = typename economy_t::burden_t;
+		using scalar_t  = typename economy_t::scalar_t;
+
+		using economy_norm_t = Economy_Normal_<economy_t>;
+		using burden_norm_t  = typename economy_norm_t::burden_t;
+
+	public:
+		scalar_t _k  = 0;
+		burden_t _mk = 0;
+		burden_t _vk = 0;
+
+	public:
+		void reset()    {_k = 0; _mk = 0; _vk = 0;}
+
+		explicit operator bool() const    {return _k > 0;}
+
+		scalar_t count    () const    {return _k;}
+		burden_t sum      () const    {return _k*_mk;}
+		burden_t mean     () const    {return _mk;}
+		burden_t variance () const    {return _vk / std::max<burden_t>(_k - 1, 1);}
+		burden_t deviation() const    {return std::sqrt(variance());}
+
+		burden_norm_t burden_norm() const    {return {mean(), variance()};}
+		void make_certain(const burden_norm_t burden)    {_k = 1e10f; _mk = burden.mean; _vk = burden.var*_k;}
+
+		burden_t mean_plus_sigmas(scalar_t sigmas)    {return mean() + deviation() * sigmas;}
+
+		void push(const burden_t burden)
+		{
+			burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
+			_mk += dm / _k;             // First frame, add burden
+			_vk += dv * (burden - _mk); // First frame, add 0
+		}
+
+		// Decay methods for calculating *recent* variance.  0 < alpha < 1.
+		void decay     (scalar_t alpha)
+		{
+			_k = 1 + (_k - 1) * alpha;
+			_vk *= alpha;
+		}
+		void push_decay(const burden_t burden, scalar_t alpha)
+		{
+			_k *= alpha;
+			burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
+			_mk += dm / _k;
+			_vk  = _vk * alpha + dv * (burden - _mk);
+		}
+
+		// Scale this stat's mean and deviation by a factor
+		void scale(const scalar_t scale_factor)
+		{
+			_mk *= scale_factor;
+			_vk *= scale_factor*scale_factor;
+		}
+
+		// Pool the statistics describing two sets.
+		BurdenStat_ pool(const BurdenStat_ &o) const
+		{
+			scalar_t net_count = count() + o.count();
+			burden_t net_mean = (o.sum() + sum()) / net_count;
+			burden_t diff = o.mean() - mean();
+			// Unbiased variance combination formula (O'Neill 2014)
+			burden_t net_vk = o._vk + _vk +
+				diff*diff * (count()*o.count()) / net_count;
+
+			return BurdenStat_{net_count, net_mean, net_vk};
+		}
+	};
+
 	template<typename T_Economy>
 	class Profile_
 	{
@@ -29,6 +109,8 @@ namespace perf_goblin
 		using economy_norm_t = Economy_Normal_<economy_t>;
 		using burden_norm_t  = typename economy_norm_t::burden_t;
 		using capacity_t     = typename economy_norm_t::capacity_t;
+
+		using burden_stat_t  = BurdenStat_<economy_t>;
 
 		using choice_index_t = uint16_t;
 		static const choice_index_t NO_CHOICE = ~choice_index_t(0);
@@ -46,70 +128,6 @@ namespace perf_goblin
 			bool valid() const    {return choice != NO_CHOICE;}
 		};
 
-		// Statistics on burdens.
-		struct burden_stat_t
-		{
-			scalar_t _k  = 0;
-			burden_t _mk = 0;
-			burden_t _vk = 0;
-
-			void reset()    {_k = 0; _mk = 0; _vk = 0;}
-
-			explicit operator bool() const    {return _k > 0;}
-
-			scalar_t count    () const    {return _k;}
-			burden_t sum      () const    {return _k*_mk;}
-			burden_t mean     () const    {return _mk;}
-			burden_t variance () const    {return _vk / std::max<burden_t>(_k - 1, 1);}
-			burden_t deviation() const    {return std::sqrt(variance());}
-
-			burden_norm_t burden_norm() const    {return {mean(), variance()};}
-			void make_certain(const burden_norm_t burden)    {_k = 1e10f; _mk = burden.mean; _vk = burden.var*_k;}
-
-			burden_t mean_plus_sigmas(scalar_t sigmas)    {return mean() + deviation() * sigmas;}
-
-			void push(const burden_t burden)
-			{
-				burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
-				_mk += dm / _k;             // First frame, add burden
-				_vk += dv * (burden - _mk); // First frame, add 0
-			}
-
-			// Decay methods for calculating *recent* variance.  0 < alpha < 1.
-			void decay     (scalar_t alpha)
-			{
-				_k = 1 + (_k - 1) * alpha;
-				_vk *= alpha;
-			}
-			void push_decay(const burden_t burden, scalar_t alpha)
-			{
-				_k *= alpha;
-				burden_t dm = (burden - _mk), dv = (_k++ ? dm : 0);
-				_mk += dm / _k;
-				_vk  = _vk * alpha + dv * (burden - _mk);
-			}
-
-			// Scale this stat's mean and deviation by a factor
-			void scale(const scalar_t scale_factor)
-			{
-				_mk *= scale_factor;
-				_vk *= scale_factor*scale_factor;
-			}
-
-			// Pool data with another burden_stat_t
-			burden_stat_t pool(const burden_stat_t &o) const
-			{
-				scalar_t net_count = count() + o.count();
-				burden_t net_mean = (o.sum() + sum()) / net_count;
-				burden_t diff = o.mean() - mean();
-				// Unbiased variance combination formula (O'Neill 2014)
-				burden_t net_vk = o._vk + _vk +
-					diff*diff * (count()*o.count()) / net_count;
-
-				return burden_stat_t{net_count, net_mean, net_vk};
-			}
-		};
-
 		/*
 			An estimate for a task option.
 		*/
@@ -123,11 +141,12 @@ namespace perf_goblin
 
 		struct Task
 		{
-			size_t               data_count = 0;
-			mutable bool         fully_explored = false; // flag, used by goblin
+		public:
+			// The list of estimates.
 			const choice_index_t count;
 			Estimate             estimates[1];
 
+		public:
 			Task(choice_index_t option_count)    : count(option_count) {}
 			Task(const Task &o)                  : count(o.count) {*this = o;}
 
@@ -135,8 +154,6 @@ namespace perf_goblin
 			Task& operator=(const Task &o)
 			{
 				assert(count == o.count);
-				data_count = o.data_count;
-				fully_explored = o.fully_explored;
 				for (choice_index_t i = 0; i < count; ++i) estimates[i] = o.estimates[i];
 				return *this;
 			}
@@ -146,6 +163,20 @@ namespace perf_goblin
 			const Estimate *end  () const    {return estimates+count;}
 			Estimate       *begin()          {return estimates;}
 			Estimate       *end  ()          {return estimates+count;}
+
+			// Query statistics
+			scalar_t data_count() const
+			{
+				scalar_t n = 0;
+				for (choice_index_t i = 0; i < count; ++i) n += estimates[i].full.count();
+				return n;
+			}
+			bool meets_quota(scalar_t samples_per_option) const
+			{
+				for (choice_index_t i = 0; i < count; ++i)
+					if (estimates[i].full.count() < samples_per_option) return false;
+				return true;
+			}
 
 			// Allocate / deallocate.
 			static Task *alloc(choice_index_t count)
@@ -177,6 +208,12 @@ namespace perf_goblin
 		~Profile_()                     {clear();}
 
 		/*
+			Iterate over all tasks.
+		*/
+		typename Tasks::const_iterator begin() const    {return _tasks.begin();}
+		typename Tasks::const_iterator end  () const    {return _tasks.end  ();}
+
+		/*
 			Get profile data for a task, if available.
 		*/
 		const Task *find(std::string id) const
@@ -193,25 +230,8 @@ namespace perf_goblin
 			if (!measurement.valid()) return nullptr;
 			Task     &task     = task_init(id, option_count);
 			Estimate &estimate = task.estimates[measurement.choice];
-			++task.data_count;
 			estimate.recent.push(measurement.burden);
 			estimate.full  .push(measurement.burden);
-			return &task;
-		}
-
-		/*
-			Assimilate "full" profile data from some other task, with a scaling factor.
-		*/
-		const Task *assimilate(const std::string &id, const Task &data, const scalar_t scale_factor = 1)
-		{
-			Task &task = task_init(id, data.count);
-			for (choice_index_t i = 0; i < task.count; ++i)
-			{
-				auto &est = task.estimates[i];
-				burden_stat_t scaled = data.estimates[i].full;
-				scaled.scale(scale_factor);
-				est.full = est.full.pool(scaled);
-			}
 			return &task;
 		}
 
@@ -250,5 +270,33 @@ namespace perf_goblin
 			return *this;
 		}
 		void clear()    {for (auto &i : _tasks) Task::free(i.second); _tasks.clear();}
+
+
+		/*
+			Assimilate "full" profile data from some other task, with a scaling factor.
+		*/
+		const Task *assimilate(const std::string &id, const Task &data, const scalar_t scale_factor = 1)
+		{
+			Task &task = task_init(id, data.count);
+			if (scale_factor == 1)
+			{
+				for (choice_index_t i = 0; i < task.count; ++i)
+				{
+					auto &est = task.estimates[i];
+					est.full = est.full.pool(data.estimates[i].full);
+				}
+			}
+			else 
+			{
+				for (choice_index_t i = 0; i < task.count; ++i)
+				{
+					auto &est = task.estimates[i];
+					burden_stat_t scaled = data.estimates[i].full;
+					scaled.scale(scale_factor);
+					est.full = est.full.pool(scaled);
+				}
+			}
+			return &task;
+		}
 	};
 }

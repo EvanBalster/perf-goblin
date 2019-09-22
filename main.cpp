@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <fstream>
 #include <string>
+#include <sstream>
 #include <list>
 #include <cmath>
 #include <ctime>
@@ -10,6 +11,7 @@
 
 #include "knapsack.h"
 #include "goblin.h"
+#include "profile_io.h"
 
 
 using namespace perf_goblin;
@@ -474,10 +476,10 @@ void test_goblin()
 	auto &knapsack = goblin.knapsack();
 	auto &chosen = knapsack.stats.chosen;
 
-	cout << std::fixed << std::setprecision(1);
-
 	while (true)
 	{
+		cout << std::fixed << std::setprecision(1);
+
 		if (repeat_problem)
 		{
 			cout << "Running a goblin scenario with past-run knowledge." << endl;
@@ -577,14 +579,19 @@ void test_goblin()
 					net_burden += setting.measure.burden;
 					net_value += setting.chosen().value;
 
+					auto QUOTA = goblin.config.measure_quota;
+
 					if (auto est = goblin.profile().find(setting.id()))
 					{
-						if (est->fully_explored) ++explored_count;
+						auto pest = goblin.past_profile().find(setting.id());
+
+						if (est->meets_quota(QUOTA) || (pest && pest->meets_quota(QUOTA)))
+							++explored_count;
 
 						for (unsigned i = 0; i < est->count; ++i)
-							knowledge_count += std::min(
-								est->estimates[i].full.count(),
-								goblin.config.measure_quota);
+							knowledge_count += std::min(QUOTA,
+								est->estimates[i].full.count() +
+								(pest ? pest->estimates[i].full.count() : Goblin::scalar_t(0)));
 					}
 				}
 
@@ -600,11 +607,11 @@ void test_goblin()
 				if (!Goblin::economy_t::acceptable(net_burden, capacity.limit)) ++frames_overload;
 			}
 
-			size_t total_data = 0;
+			Goblin::scalar_t total_data = 0;
 			for (auto &s : scenario)
 			{
-				auto *est = goblin.profile().find(s.id());
-				if (est) total_data += est->data_count;
+				auto *entry = goblin.profile().find(s.id());
+				if (entry) total_data += entry->data_count();
 			}
 
 			cout << "  after " << frames << " frames:" << endl;
@@ -635,24 +642,24 @@ void test_goblin()
 
 		while (true)
 		{
-			cout << "\nWhat now?\n"
+			cout << endl;
+			cout << "What now?\n"
 				"  N = test with new problem (default action\n"
 				"  R = test with same problem, keeping knowledge\n"
-				"  V = view profile data\n"
+				"  P = view profile data\n"
 				"  Q = quit (proceed to knapsack test)\n"
 				">> ";
 			std::string s;
 			std::getline(std::cin, s);
+			cout << endl;
 
 			if (s.length() == 0 || s[0] == 'n' || s[0] == 'N' || s[0] == '\r' || s[0] == '\n')
 			{
-				cout << endl;
 				repeat_problem = false;
 				break;
 			}
 			else if (s[0] == 'r' || s[0] == 'R')
 			{
-				cout << endl;
 				repeat_problem = true;
 				break;
 			}
@@ -660,15 +667,41 @@ void test_goblin()
 			{
 				return;
 			}
-			else if (s[0] == 'v' || s[0] == 'V')
+			else if (s[0] == 'p' || s[0] == 'P')
 			{
-				cout << endl;
-
 				cout << "Profile data...";
 				cout << "  capacity:     #" << capacity.limit << " at mean+sigma*" << capacity.sigmas << endl;
 				cout << "  measure quota: " << goblin.config.measure_quota << endl;
 
-				size_t n = 0;
+				std::stringstream ss;
+				ss << std::fixed << std::setprecision(2);
+				ss << goblin.profile();
+
+				cout << ss.str() << endl;
+
+				{
+					cout << "Copying profile data..." << endl;
+					Profile_f copy;
+					ss >> copy;
+					if (!ss.fail() && !ss.bad())
+					{
+						std::stringstream ss2;
+						ss2 << std::fixed << std::setprecision(2);
+						ss2 << copy;
+						if (ss2.str() == ss2.str())
+						{
+							cout << "  copy has the same textual representation (success)" << endl;
+						}
+						else
+						{
+							cout << "  printing the copy..." << endl;
+							cout << ss2.str() << endl;
+						}
+					}
+					else cout << "  failed to re-parse the above text into a profile." << endl;
+				}
+
+				/*size_t n = 0;
 				for (auto &setting : scenario)
 				{
 					if (setting.options().option_count <= 1) continue;
@@ -689,7 +722,7 @@ void test_goblin()
 					std::cout << std::endl;
 					//std::cout << "o1 m #" << first.full.mean() << " sig #" << first.this_run.deviation() << std::endl;
 					//if (++n >= 9) break;
-				}
+				}*/
 
 				cout << endl;
 			}

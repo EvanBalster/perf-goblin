@@ -355,8 +355,8 @@ namespace perf_goblin
 				// Calculate a blind guess for unprofiled options?
 				burden_norm_t blind_guess;
 				scalar_t      unexplored_burden_mod = scalar_t(1);
-				scalar_t      missing_data = 0;
-				if (!pres || !pres->fully_explored)
+				scalar_t      data_total = 0, data_missing = 0;
+				if (!pres || !pres->meets_quota(config.measure_quota))
 				{
 					burden_norm_t lightest = economy_norm_t::infinite();
 
@@ -366,21 +366,20 @@ namespace perf_goblin
 							curr = (pres ? pres->estimates[i].full : UNKNOWN_BURDEN),
 							prev = (past ? past->estimates[i].full : UNKNOWN_BURDEN);
 
+						data_total   += curr.count() + prev.count();
+						data_missing += std::max<scalar_t>(0,
+							config.measure_quota - curr.count() - prev.count());
+
 						burden_norm_t test;
 						float count = 0;
 						if      (curr) {count = curr.count(); test = curr.burden_norm() * _anomaly.recent;}
 						else if (prev) {count = prev.count(); test = prev.burden_norm() * ratio;}
-
-						missing_data += std::max<scalar_t>(0,
-							config.measure_quota - curr.count() - prev.count());
 						if (count && economy_norm_t::lesser(test, lightest)) lightest = test;
 					}
 
 					blind_guess = lightest;
-					unexplored_burden_mod = missing_data / std::max<scalar_t>(missing_data,
-						(pres ? pres->data_count : 0) +
-						(past ? past->data_count : 0));
-					if (pres) pres->fully_explored = (!missing_data);
+					unexplored_burden_mod = data_missing /
+						std::max<scalar_t>(data_missing, data_total);
 				}
 
 				// Estimate burdens for each option, if possible.
@@ -405,9 +404,10 @@ namespace perf_goblin
 						{
 							// Interpolate between data from this run and prior estimate.
 							float mix = curr.count() / config.measure_quota;
+							option_burden = curr.burden_norm() * _anomaly.recent;
 							option_burden =
-								curr.burden_norm() * mix +
-								prior_burden       * (1.f-mix);
+								option_burden * mix +
+								prior_burden  * (1.f-mix);
 						}
 						else
 						{
@@ -428,7 +428,6 @@ namespace perf_goblin
 					{
 						value_bonus    = config.explore_value;
 						option_burden *= unexplored_burden_mod;
-						if (pres) pres->fully_explored = false;
 					}
 
 					// Formulate option for knapsack decision...
