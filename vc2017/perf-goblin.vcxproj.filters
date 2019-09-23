@@ -22,7 +22,7 @@
     <ClInclude Include="..\profile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\profile_io.h">
+    <ClInclude Include="..\profile_json.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -11,7 +11,7 @@
 
 #include "knapsack.h"
 #include "goblin.h"
-#include "profile_io.h"
+#include "profile_json.h"
 
 
 using namespace perf_goblin;
