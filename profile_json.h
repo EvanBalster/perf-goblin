@@ -89,7 +89,7 @@ namespace perf_goblin
 	template<typename T_Econ>
 	std::ostream &operator<<(std::ostream &o, const typename BurdenStat_<T_Econ> &stat)
 	{
-		int n = stat.count();
+		int n = int(stat.count());
 		o << '[';
 		if (stat.count() == n) o << n;
 		else                   o << stat.count();
