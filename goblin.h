@@ -237,7 +237,9 @@ namespace perf_goblin
 			strategy_index_t strategy_index) = 0;
 
 		/*
-			Get ID for estimation purposes
+			Semi-unique ID for performance profile.
+				IDs may be re-used for settings with the same burdens per option.
+				Avoid double quotes and line breaks in this value.
 		*/
 		virtual const std::string &id() const = 0;
 
@@ -439,6 +441,7 @@ namespace perf_goblin
 			else
 			{
 				// Lacking any profiler data from this run, we force to the default choice.
+				decision.choice = setting->choice_default();
 				if (decision.choice >= decision.option_count) decision.choice = 0;
 				for (choice_index_t i = 0; i < options.option_count; ++i)
 				{
@@ -462,11 +465,6 @@ namespace perf_goblin
 			}
 		}
 
-		/*if (ratio > 0)
-		{
-			std::cout << std::flush;
-		}*/
-
 		// Finally, run the knapsack solver.
 		_knapsack.decide(capacity, precision);
 
@@ -487,51 +485,3 @@ namespace perf_goblin
 		decide(capacity, precision);
 	}
 }
-
-#if 0
-/*
-			Add an unavoidable burden.
-		*/
-		Decision& add_burden(burden_t burden)
-		{
-			decisions.emplace_back(Decision());
-			Decision &decision = decisions.back();
-			decision.options.push_back(Option{burden,0});
-			return decision;
-		}
-
-		/*
-			Add an fixed incentive (modifies the total value of any solution)
-		*/
-		Decision& add_incentive(value_t value)
-		{
-			decisions.emplace_back(Decision());
-			Decision &decision = decisions.back();
-			decision.options.push_back(Option{0,value});
-			return decision;
-		}
-
-		/*
-			Add a binary decision which has no burden 
-		*/
-		Decision& add_binary_item(burden_t burden, value_t value)
-		{
-			decisions.emplace_back(Decision());
-			Decision &decision = decisions.back();
-			decision.options.push_back(Option{0,0});
-			decision.options.push_back(Option{burden,value});
-			return decision;
-		}
-
-		/*
-			Add an option from an array.
-		*/
-		template<size_t N>
-		Decision& add_decision(const Option (&options)[N])
-		{
-			decisions.emplace_back(Decision());
-			Decision &decision = decisions.back();
-			for (const Option &option : options) decision.options.push_back(option);
-			return decision;
-		}
-#endif
