@@ -433,7 +433,7 @@ public:
 		choice_index = _choice_index;
 	}
 
-	const Options &options() override
+	const Options &options() const override
 	{
 		return _options;
 	}

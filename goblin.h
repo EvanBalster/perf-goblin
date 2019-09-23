@@ -216,15 +216,15 @@ namespace perf_goblin
 	public:
 		Setting_() {}
 
-		~Setting_()
+		virtual ~Setting_()
 		{
 			if (_goblin) _goblin->remove(this);
 		}
 
 		/*
-			Get the set of options
+			Get the set of options (defines values).
 		*/
-		virtual const Options &options() = 0;
+		virtual const Options &options() const = 0;
 
 		/*
 			Choice management
