@@ -470,30 +470,32 @@ void test_goblin()
 {
 	bool repeat_problem = false;
 
-	Goblin goblin;
 	std::list<SimSetting> scenario;
 
-	auto &knapsack = goblin.knapsack();
-	auto &chosen = knapsack.stats.chosen;
+	Profile_f saved_profile;
 
 	while (true)
 	{
 		cout << std::fixed << std::setprecision(1);
 
+		Goblin goblin;
+
+		auto &knapsack = goblin.knapsack();
+		auto &chosen = knapsack.stats.chosen;
+
 		if (repeat_problem)
 		{
 			cout << "Running a goblin scenario with past-run knowledge." << endl;
 
-			Profile_f profile = goblin.full_profile();
-
-			goblin.set_past_profile(profile);
+			goblin.set_past_profile(saved_profile);
 			goblin.set_profile(Profile_f());
+
+			for (auto &item : scenario) goblin.add(&item);
 		}
 		else
 		{
 			cout << "Generating a new goblin scenario." << endl;
 
-			goblin = Goblin();
 			scenario.clear();
 
 			for (size_t i = 0; i < 50; ++i)
@@ -660,6 +662,7 @@ void test_goblin()
 			}
 			else if (s[0] == 'r' || s[0] == 'R')
 			{
+				saved_profile = goblin.full_profile();
 				repeat_problem = true;
 				break;
 			}

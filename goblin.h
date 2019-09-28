@@ -104,14 +104,20 @@ namespace perf_goblin
 		void remove(Setting_t *setting);
 
 		/*
+			Iterate over settings & decisions.
+		*/
+		typename Settings::const_iterator begin() const    {return settings.begin();}
+		typename Settings::const_iterator end  () const    {return settings.begin();}
+
+		/*
 			Update all settings, accounting for any new measurements.
 				Alternatively, you can call subroutines separately:
 				- harvest() : collect new measurements and update anomaly
 				- decide(...) : resolve all settings
 		*/
 		void update(capacity_t capacity, size_t precision);
-		void decide(capacity_t capacity, size_t precision);
-		void harvest();
+		void update_decide(capacity_t capacity, size_t precision);
+		void update_harvest();
 
 		/*
 			Access the profile(s) and knapsack solver (for stats)
@@ -172,6 +178,11 @@ namespace perf_goblin
 			auto i = settings.find(setting);
 			return (i==settings.end()) ? nullptr : &i->second;
 		}
+
+	private:
+		// No copying
+		Goblin_(const Goblin_ &o) = delete;
+		void operator=(const Goblin_ &o) = delete;
 	};
 	
 	/*
@@ -209,10 +220,6 @@ namespace perf_goblin
 			const Option *end  () const    {return options+option_count;}
 		};
 
-	private:
-		friend class Goblin_<economy_t>;
-		Goblin_t *_goblin = nullptr;
-
 	public:
 		Setting_() {}
 
@@ -227,14 +234,10 @@ namespace perf_goblin
 		virtual const Options &options() const = 0;
 
 		/*
-			Choice management
-				choice_default: suggested choice; may change at any time.
-				choice_set: updated choice from goblin.
+			Return a reasonable default choice.
 		*/
 		virtual choice_index_t choice_default() const    {return 0;}
-		virtual void           choice_set(
-			choice_index_t   choice_index,
-			strategy_index_t strategy_index) = 0;
+		
 
 		/*
 			Semi-unique ID for performance profile.
@@ -244,9 +247,31 @@ namespace perf_goblin
 		virtual const std::string &id() const = 0;
 
 		/*
-			Get burden measurement.  (burden_info_t::infinite() if N/A)
+			Get the goblin controlling this setting, if any.
 		*/
+		Goblin_t *goblin() const    {return _goblin;}
+
+	protected:
+		/*
+			These methods are used by the Goblin.
+		*/
+		friend class Goblin_<economy_t>;
+
+		// Called when a goblin takes or releases control over this setting.
+		virtual void        goblin_set() {}
+
+		// Get the next measurement in queue (default-construct if N/A)
 		virtual Measurement measurement() = 0;
+
+		// Receive new choices made by the Goblin.
+		//   Strategies are unsupported at the moment and always set to zero.
+		virtual void        choice_set(
+			choice_index_t   choice_index,
+			strategy_index_t strategy_index) = 0;
+
+	private:
+		
+		Goblin_t *_goblin = nullptr;
 	};
 
 
@@ -269,6 +294,7 @@ namespace perf_goblin
 	{
 		if (setting->_goblin) return setting->_goblin == this;
 		setting->_goblin = this;
+		setting->goblin_set();
 		if (settings.find(setting) != settings.end()) return true;
 		settings.emplace(setting, Decision_t());
 		return true;
@@ -277,11 +303,15 @@ namespace perf_goblin
 	void Goblin_<Econ>::remove(Setting_t *setting)
 	{
 		settings.erase(setting);
-		if (setting->_goblin == this) setting->_goblin = nullptr;
+		if (setting->_goblin == this)
+		{
+			setting->_goblin = nullptr;
+			setting->goblin_set();
+		}
 	}
 
 	template<typename Econ>
-	void Goblin_<Econ>::harvest()
+	void Goblin_<Econ>::update_harvest()
 	{
 		// Decay old measurements
 		_profile.decay_recent(config.recent_alpha);
@@ -295,11 +325,13 @@ namespace perf_goblin
 		for (auto &pair : settings)
 		{
 			auto *setting = pair.first;
-			auto measure = setting->measurement();
 
-			// Measure...
-			if (measure.valid())
+			while (true)
 			{
+				// Measure...
+				auto measure = setting->measurement();
+				if (!measure.valid()) break;
+
 				// Burdens must be >= 0.
 				if (economy_t::lesser(measure.burden, economy_t::zero()))
 					measure.burden = economy_t::zero();
@@ -329,7 +361,7 @@ namespace perf_goblin
 	}
 
 	template<typename Econ>
-	void Goblin_<Econ>::decide(capacity_t capacity, size_t precision)
+	void Goblin_<Econ>::update_decide(capacity_t capacity, size_t precision)
 	{
 		_knapsack.clear();
 		option_store.clear();
@@ -355,7 +387,7 @@ namespace perf_goblin
 			if (pres || (past && ratio > scalar_t(0)))
 			{
 				// Calculate a blind guess for unprofiled options?
-				burden_norm_t blind_guess;
+				burden_norm_t blind_guess = economy_norm_t::zero();
 				scalar_t      unexplored_burden_mod = scalar_t(1);
 				scalar_t      data_total = 0, data_missing = 0;
 				if (!pres || !pres->meets_quota(config.measure_quota))
@@ -479,9 +511,9 @@ namespace perf_goblin
 	void Goblin_<Econ>::update(capacity_t capacity, size_t precision)
 	{
 		// Harvest new measurements
-		harvest();
+		update_harvest();
 
 		// Decide
-		decide(capacity, precision);
+		update_decide(capacity, precision);
 	}
 }

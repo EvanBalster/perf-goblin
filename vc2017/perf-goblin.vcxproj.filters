@@ -25,6 +25,9 @@
     <ClInclude Include="..\profile_json.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\goblin_util.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\main.cpp">

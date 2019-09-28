@@ -49,9 +49,12 @@ namespace perf_goblin
 		const Options &options()        const final    {return _options;}
 		choice_index_t choice_default() const final    {return _choice_default;}
 
-		/*
-			Choosing and measuring methods may be overridden.
-		*/
+		// These methods facilitate using this class without extending it.
+		choice_index_t choice_current() const         {return _choice_current;}
+		void measurement_set(const Measurement &m)    {_measurement = m;}
+
+	protected:
+		// These methods may be overridden in a deriving class.
 		void           choice_set(
 			choice_index_t   choice_index,
 			strategy_index_t strategy_index) override
@@ -63,18 +66,6 @@ namespace perf_goblin
 			auto m = _measurement;
 			_measurement = Measurement();
 			return m;
-		}
-
-		/*
-			Additional methods to facilitate using this class as-is.
-		*/
-		choice_index_t choice_current() const
-		{
-			return _choice_current;
-		}
-		void measurement_set(const Measurement &measurement)
-		{
-			measurement = _measurement;
 		}
 	};
 
