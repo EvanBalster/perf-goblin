@@ -40,8 +40,11 @@ namespace perf_goblin
 			std::string id,
 			Option      option_array[option_count],
 			uint16_t    choice_default = 0) :
-				_id(id), _option_array(option_array), _options{option_array, option_count},
-				_choice_default(choice_default), _choice_current(choice_default) {}
+				_id(id), _options{option_array, option_count},
+				_choice_default(choice_default), _choice_current(choice_default)
+		{
+			for (uint16_t i = 0; i < option_count; ++i) _option_array[i] = option_array[i];
+		}
 
 		~Setting_Array_() override {}
 

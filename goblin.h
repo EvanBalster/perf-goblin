@@ -107,7 +107,7 @@ namespace perf_goblin
 			Iterate over settings & decisions.
 		*/
 		typename Settings::const_iterator begin() const    {return settings.begin();}
-		typename Settings::const_iterator end  () const    {return settings.begin();}
+		typename Settings::const_iterator end  () const    {return settings.end();}
 
 		/*
 			Update all settings, accounting for any new measurements.
